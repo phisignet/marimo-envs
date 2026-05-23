@@ -7,7 +7,9 @@ authors = [
     { name = "phisignet", email = "132890251+phisignet@users.noreply.github.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "marimo[mcp,recommended]>=0.23.7",
+]
 
 [build-system]
 requires = ["uv_build>=0.10.7,<0.11.0"]

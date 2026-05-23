@@ -1,0 +1,102 @@
+# 1Podに marimo と ACPサイドカーを同居させる。
+#
+# なぜサイドカー構成か:
+# 1. ブラウザは ws://window.location.hostname:3017/message にハードコードで繋ぐ。
+#    → marimoと同じ外部ホストに ACP も居る必要がある(=同一Service)
+# 2. ACPエージェントはノートブック実体に読み書きする
+#    → marimoと同じファイルシステム(共有PVC、同一パス /workspace)が必要
+#
+# strategy=Recreate: PVC(RWO)を使うため、Rolling だと新旧Podが同時にマウント不可。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marimo
+  namespace: marimo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: marimo
+  template:
+    metadata:
+      labels:
+        app: marimo
+    spec:
+      # 共有PVCを両コンテナのuid 1000で書き込めるよう fsGroup を設定。
+      # k8s が PV を chown :1000 + setgid してくれる。
+      securityContext:
+        fsGroup: 1000
+
+      containers:
+        # ---------------------------------------------------------------
+        # marimo: ノートブックエディタ本体。公式イメージのENTRYPOINTは
+        #   sh -c "exec marimo edit --no-token -p $PORT --host $HOST"
+        # なので PORT/HOST の env だけ上書きする。working dir は /workspace に変更。
+        # ---------------------------------------------------------------
+        - name: marimo
+          image: ghcr.io/marimo-team/marimo:latest
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - name: PORT
+              value: "2718"
+            - name: HOST
+              value: "0.0.0.0"
+          ports:
+            - name: marimo
+              containerPort: 2718
+              protocol: TCP
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: marimo
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              memory: "2Gi"
+
+        # ---------------------------------------------------------------
+        # acp-agent: stdio-to-ws + claude-code-acp + Claude Code SDK。
+        # サブスク認証は CLAUDE_CODE_OAUTH_TOKEN(Secret)経由。
+        # ---------------------------------------------------------------
+        - name: acp-agent
+          image: marimo-envs/acp-agent:0.1.0  # ローカルビルド → kind load で配置
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: claude-code-token
+                  key: token
+            # Claude Code がアップデートチェックでネットワークに出るのを抑制(任意)。
+            - name: DISABLE_AUTOUPDATER
+              value: "1"
+          ports:
+            - name: acp
+              containerPort: 3017
+              protocol: TCP
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              memory: "2Gi"
+
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: marimo-workspace
