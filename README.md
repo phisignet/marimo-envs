@@ -78,7 +78,9 @@ marimo UI を開いたら:
 | パス | 役割 |
 |---|---|
 | `kind/cluster.yaml` | kindクラスタ設定。`extraPortMappings` で 2718/3017 を LAN に出す |
+| `images/marimo/Dockerfile` | marimo公式イメージ + `marimo[mcp]` extras。`--mcp` を常時ON、`--mcp-allow-remote` は env `MARIMO_ALLOW_REMOTE_MCP=1` opt-in(デフォルトOFF) |
 | `images/acp-agent/Dockerfile` | ACPサイドカーイメージ(node + stdio-to-ws + claude-code-acp + Claude Code SDK) |
+| `images/acp-agent/entrypoint.sh` | 起動時にmarimoのMCPサーバーをClaude Codeに自動登録 |
 | `manifests/namespace.yaml` | 専用 namespace `marimo` |
 | `manifests/pvc.yaml` | ノートブック永続化用 PVC(5Gi, RWO) |
 | `manifests/deployment.yaml` | marimo + acp-agent の2コンテナPod |
@@ -89,6 +91,29 @@ marimo UI を開いたら:
 | `scripts/teardown.sh` | クラスタ削除(PVC含む) |
 | `docs/SETUP.md` | 詳細手順とトラブルシューティング |
 
+## エージェントが使えるツール
+
+ACPで接続したClaude Codeは、以下を使ってノートブックを操作・観察できる:
+
+**ACPプロトコル由来(常時利用可)**
+- `Read` / `Edit` / `Write` — marimoノートブック(.py)の読み書き
+
+**marimoのMCPサーバー由来**(本構成では `--mcp` 有効化済みで自動登録。Pod内で `mcp__marimo__*` として見える)
+- `get_active_notebooks` — 開いているノートブック一覧
+- `get_lightweight_cell_map` — 全セルの概要
+- `get_cell_runtime_data` — セルのコード、エラー、変数情報
+- `get_cell_outputs` — セルの出力(HTML、チャート等)
+- `get_cell_dependency_graph` — セル依存関係グラフ
+- `get_notebook_errors` — 失敗セルとフルトレースバック
+- `get_tables_and_variables` — データフレームや変数の情報
+- `get_database_tables` — DBスキーマ
+- `get_marimo_rules` — marimo向けAIガイドライン
+- `lint_notebook` — ノートブックのLint実行
+- プロンプト: `active_notebooks`, `errors_summary`
+
+> marimoのMCPサーバーは `http://localhost:2718/mcp/server`(HTTP)で公開され、同Pod内のACPサイドカーが起動時に `claude mcp add` で自動登録する。クライアント側は何も触らなくてよい。
+> 公式ドキュメント(`docs/guides/editor_features/mcp.md`)に載っていないツールも含まれているので、最新の一覧はPod内で `kubectl -n marimo exec deploy/marimo -c acp-agent -- claude mcp list` または marimo UI のエージェントパネルで Claude に直接聞くのが確実。
+
 ## Step 1 で意図的に妥協している点
 
 - **marimoの認証**: `--no-token`(公式イメージのデフォルト)で動かしているため、
@@ -98,6 +123,13 @@ marimo UI を開いたら:
 - **3017 を直接 LAN に露出**: 本来は Ingress に集約したいが、marimo フロントエンドが
   ポートをハードコードしているため Step 1 では直接公開する。将来の対策は
   [docs/SETUP.md](docs/SETUP.md) の「今後のステップ」を参照。
+- **MCPエンドポイント `/mcp/server` も認証なしで LAN 公開**: marimoポート 2718 と
+  同じ口に乗っているため、`http://<LAN_IP>:2718/mcp/server` も到達可能。
+  `--no-token` 下では `RequiresEditMiddleware` も素通りするため、LANに居る人なら
+  誰でもノートブックの読み書きツールを叩ける。Step 1 はあくまで LAN/VPN 前提で
+  運用、Step 4 で nginx に認証を載せて塞ぐ。なお `--mcp-allow-remote`
+  (DNS rebinding 保護無効化フラグ)は **デフォルトOFF** にしてあり、ホスト名で
+  叩く構成に拡張する際だけ env `MARIMO_ALLOW_REMOTE_MCP=1` で opt-in する。
 
 ## 関連 Issue / 参考
 - marimo Agents 公式: https://docs.marimo.io/guides/editor_features/agents/

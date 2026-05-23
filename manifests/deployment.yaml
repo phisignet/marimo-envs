@@ -31,12 +31,15 @@ spec:
 
       containers:
         # ---------------------------------------------------------------
-        # marimo: ノートブックエディタ本体。公式イメージのENTRYPOINTは
-        #   sh -c "exec marimo edit --no-token -p $PORT --host $HOST"
-        # なので PORT/HOST の env だけ上書きする。working dir は /workspace に変更。
+        # marimo: ノートブックエディタ本体。公式イメージに marimo[mcp] extras を
+        # 追加した派生イメージ(images/marimo/Dockerfile)。CMDは
+        #   marimo edit --no-token --mcp [--mcp-allow-remote] -p $PORT --host $HOST
+        # の形で、--mcp は常時ON、--mcp-allow-remote は env
+        # MARIMO_ALLOW_REMOTE_MCP=1 のときだけ opt-in で付与される(デフォルトOFF)。
+        # 通常は PORT/HOST の env だけ上書きすれば --mcp 有効で起動する。
         # ---------------------------------------------------------------
         - name: marimo
-          image: ghcr.io/marimo-team/marimo:latest
+          image: marimo-envs/marimo:0.1.0  # ローカルビルド → kind load
           imagePullPolicy: IfNotPresent
           workingDir: /workspace
           env:
