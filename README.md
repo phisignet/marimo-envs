@@ -78,7 +78,9 @@ marimo UI を開いたら:
 | パス | 役割 |
 |---|---|
 | `kind/cluster.yaml` | kindクラスタ設定。`extraPortMappings` で 2718/3017 を LAN に出す |
+| `images/marimo/Dockerfile` | marimo公式イメージ + `marimo[mcp]` extras + `--mcp --mcp-allow-remote` 起動 |
 | `images/acp-agent/Dockerfile` | ACPサイドカーイメージ(node + stdio-to-ws + claude-code-acp + Claude Code SDK) |
+| `images/acp-agent/entrypoint.sh` | 起動時にmarimoのMCPサーバーをClaude Codeに自動登録 |
 | `manifests/namespace.yaml` | 専用 namespace `marimo` |
 | `manifests/pvc.yaml` | ノートブック永続化用 PVC(5Gi, RWO) |
 | `manifests/deployment.yaml` | marimo + acp-agent の2コンテナPod |
@@ -88,6 +90,25 @@ marimo UI を開いたら:
 | `scripts/install-tools.sh` | kind/kubectl の sudo なしインストール |
 | `scripts/teardown.sh` | クラスタ削除(PVC含む) |
 | `docs/SETUP.md` | 詳細手順とトラブルシューティング |
+
+## エージェントが使えるツール
+
+ACPで接続したClaude Codeは、以下を使ってノートブックを操作・観察できる:
+
+**ACPプロトコル由来(常時利用可)**
+- `Read` / `Edit` / `Write` — marimoノートブック(.py)の読み書き
+
+**marimoのMCPサーバー由来**(本構成では `--mcp` 有効化済みで自動登録)
+- `get_active_notebooks` — 開いているノートブック一覧
+- `get_lightweight_cell_map` — 全セルの概要
+- `get_cell_runtime_data` — 実行時間・エラー・変数等のランタイム情報
+- `get_notebook_errors` — 失敗セルとフルトレースバック
+- `get_tables_and_variables` — メモリ内のデータ構造
+- `get_database_tables` — DBスキーマ
+- `get_marimo_rules` — marimo向けAIガイドライン
+- プロンプト: `active_notebooks`, `errors_summary`
+
+> marimoのMCPサーバーは `http://localhost:2718/mcp/server`(HTTP)で公開され、同Pod内のACPサイドカーが起動時に `claude mcp add` で自動登録する。クライアント側は何も触らなくてよい。
 
 ## Step 1 で意図的に妥協している点
 

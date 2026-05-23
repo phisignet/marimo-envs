@@ -11,6 +11,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 CLUSTER_NAME="marimo"
+MARIMO_IMAGE="marimo-envs/marimo:0.1.0"
 ACP_IMAGE="marimo-envs/acp-agent:0.1.0"
 NS="marimo"
 
@@ -45,12 +46,16 @@ else
   kind create cluster --name "$CLUSTER_NAME" --config kind/cluster.yaml
 fi
 
-# -------- ACPサイドカーイメージ --------
+# -------- カスタムイメージ群 --------
+echo "[+] marimo拡張イメージ(marimo[mcp]入り)をビルド: ${MARIMO_IMAGE}"
+docker build -t "$MARIMO_IMAGE" images/marimo
+
 echo "[+] ACPサイドカーイメージをビルド: ${ACP_IMAGE}"
 docker build -t "$ACP_IMAGE" images/acp-agent
 
-echo "[+] kindクラスタにイメージをload..."
-kind load docker-image "$ACP_IMAGE" --name "$CLUSTER_NAME"
+echo "[+] 両イメージをkindクラスタにload..."
+kind load docker-image "$MARIMO_IMAGE" --name "$CLUSTER_NAME"
+kind load docker-image "$ACP_IMAGE"    --name "$CLUSTER_NAME"
 
 # -------- マニフェスト適用 --------
 echo "[+] Namespace と PVC を適用..."

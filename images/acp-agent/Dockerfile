@@ -34,15 +34,18 @@ RUN npm install -g \
 
 # node:22-slim には既に node ユーザー (uid/gid 1000) が存在。
 # marimo公式イメージの appuser も uid/gid 1000 なので、ID整合のためそのまま流用する。
+# 起動時に同Pod内marimoのMCPサーバーをClaude Code設定に登録するエントリポイント。
+# node ユーザー(uid 1000)で動かすため、所有権を合わせてコピーする。
+COPY --chown=node:node entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 USER node
 WORKDIR /workspace
 
 EXPOSE 3017
 
-# stdio-to-ws の使い方:
-#   stdio-to-ws "<command-string>" --port <port>
-# 第1引数は単一の文字列としてサブコマンドを受け取る(README参照)。
-# claude-code-acp は globally install 済みで /usr/local/bin にバイナリがあるため
-# npx を介さず直接起動(起動の高速化と依存の単純化)。
-ENTRYPOINT ["tini", "--"]
-CMD ["stdio-to-ws", "claude-code-acp", "--port", "3017"]
+# entrypoint.sh が:
+#   1) claude mcp add --transport http marimo http://localhost:2718/mcp/server
+#   2) exec stdio-to-ws claude-code-acp --port 3017
+# を順に実行する。
+ENTRYPOINT ["tini", "--", "/usr/local/bin/entrypoint.sh"]

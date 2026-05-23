@@ -105,6 +105,25 @@ kubectl -n marimo get pvc
 ```
 `Pending` なら kind の `local-path-provisioner` が動いていない。`kubectl get pods -n local-path-storage` を確認。
 
+## marimo MCP サーバーの動作確認
+
+本構成では marimo の `--mcp` フラグを有効化し、ACPサイドカー起動時に Claude Code 側へ自動登録している。動作確認は次の通り:
+
+```bash
+# marimo container 内に MCP エンドポイントが上がっているか
+kubectl -n marimo exec deploy/marimo -c marimo -- \
+    curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:2718/mcp/server
+# 期待: 200, 202, 405 など(GETでも何らかの応答が返れば起動済)
+
+# ACPサイドカー側で MCP 設定が登録されているか
+kubectl -n marimo logs deploy/marimo -c acp-agent | grep -i 'mcp\|entrypoint'
+
+# Claude Code 設定上の MCP 一覧
+kubectl -n marimo exec deploy/marimo -c acp-agent -- claude mcp list
+```
+
+marimo UI のエージェントパネルで、Claude に「現在のMCPツール一覧を教えて」のように聞いた際、`mcp__marimo__get_notebook_errors` などの `mcp__marimo__*` ツールが現れていれば成功。
+
 ## 今後のステップ(プロジェクトロードマップ)
 
 | Step | 内容 | 主な変更点 |
