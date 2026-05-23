@@ -98,17 +98,21 @@ ACPで接続したClaude Codeは、以下を使ってノートブックを操作
 **ACPプロトコル由来(常時利用可)**
 - `Read` / `Edit` / `Write` — marimoノートブック(.py)の読み書き
 
-**marimoのMCPサーバー由来**(本構成では `--mcp` 有効化済みで自動登録)
+**marimoのMCPサーバー由来**(本構成では `--mcp` 有効化済みで自動登録。Pod内で `mcp__marimo__*` として見える)
 - `get_active_notebooks` — 開いているノートブック一覧
 - `get_lightweight_cell_map` — 全セルの概要
-- `get_cell_runtime_data` — 実行時間・エラー・変数等のランタイム情報
+- `get_cell_runtime_data` — セルのコード、エラー、変数情報
+- `get_cell_outputs` — セルの出力(HTML、チャート等)
+- `get_cell_dependency_graph` — セル依存関係グラフ
 - `get_notebook_errors` — 失敗セルとフルトレースバック
-- `get_tables_and_variables` — メモリ内のデータ構造
+- `get_tables_and_variables` — データフレームや変数の情報
 - `get_database_tables` — DBスキーマ
 - `get_marimo_rules` — marimo向けAIガイドライン
+- `lint_notebook` — ノートブックのLint実行
 - プロンプト: `active_notebooks`, `errors_summary`
 
 > marimoのMCPサーバーは `http://localhost:2718/mcp/server`(HTTP)で公開され、同Pod内のACPサイドカーが起動時に `claude mcp add` で自動登録する。クライアント側は何も触らなくてよい。
+> 公式ドキュメント(`docs/guides/editor_features/mcp.md`)に載っていないツールも含まれているので、最新の一覧はPod内で `kubectl -n marimo exec deploy/marimo -c acp-agent -- claude mcp list` または marimo UI のエージェントパネルで Claude に直接聞くのが確実。
 
 ## Step 1 で意図的に妥協している点
 

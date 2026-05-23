@@ -110,19 +110,20 @@ kubectl -n marimo get pvc
 本構成では marimo の `--mcp` フラグを有効化し、ACPサイドカー起動時に Claude Code 側へ自動登録している。動作確認は次の通り:
 
 ```bash
-# marimo container 内に MCP エンドポイントが上がっているか
-kubectl -n marimo exec deploy/marimo -c marimo -- \
-    curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:2718/mcp/server
-# 期待: 200, 202, 405 など(GETでも何らかの応答が返れば起動済)
+# marimo起動ログに "Experimental MCP server configuration" 行があるか
+kubectl -n marimo logs deploy/marimo -c marimo | grep -iE 'mcp|experimental'
 
 # ACPサイドカー側で MCP 設定が登録されているか
-kubectl -n marimo logs deploy/marimo -c acp-agent | grep -i 'mcp\|entrypoint'
+kubectl -n marimo logs deploy/marimo -c acp-agent | grep -iE 'mcp|entrypoint'
 
-# Claude Code 設定上の MCP 一覧
+# Claude Code 設定上の MCP 一覧(health check付き)
 kubectl -n marimo exec deploy/marimo -c acp-agent -- claude mcp list
+# 期待: "marimo: http://localhost:2718/mcp/server (HTTP) - ✓ Connected"
 ```
 
-marimo UI のエージェントパネルで、Claude に「現在のMCPツール一覧を教えて」のように聞いた際、`mcp__marimo__get_notebook_errors` などの `mcp__marimo__*` ツールが現れていれば成功。
+> 補足: acp-agent イメージには curl が入っていないので、エンドポイントを HTTP で直接叩いて確認したい場合は `claude mcp list` のhealth checkに任せる。
+
+marimo UI のエージェントパネルで、Claude に「現在のMCPツール一覧を教えて」のように聞いた際、`mcp__marimo__get_notebook_errors` などの `mcp__marimo__*` ツールが現れていれば成功。なお実際に提供されるツールは `mcp.md` 公式記載より多い(`lint_notebook`, `get_cell_outputs`, `get_cell_dependency_graph` 等)。
 
 ## 今後のステップ(プロジェクトロードマップ)
 
