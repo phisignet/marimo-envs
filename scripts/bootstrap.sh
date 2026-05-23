@@ -11,9 +11,27 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 CLUSTER_NAME="marimo"
-MARIMO_IMAGE="marimo-envs/marimo:0.1.0"
-ACP_IMAGE="marimo-envs/acp-agent:0.1.0"
 NS="marimo"
+
+# Image タグは manifests/deployment.yaml を single source of truth として扱う。
+# bootstrap.sh が build/load するタグと、kubectl apply で動かす Deployment の
+# タグが drift する事故(片方だけ更新したケース)を構造的に排除する。
+extract_image() {
+  # 例: "image: marimo-envs/marimo:0.1.0  # comment" → "marimo-envs/marimo:0.1.0"
+  grep -E "^[[:space:]]+image:[[:space:]]+$1" manifests/deployment.yaml \
+    | head -1 | awk '{print $2}'
+}
+MARIMO_IMAGE="$(extract_image 'marimo-envs/marimo:')"
+ACP_IMAGE="$(extract_image   'marimo-envs/acp-agent:')"
+
+if [[ -z "$MARIMO_IMAGE" || -z "$ACP_IMAGE" ]]; then
+  echo "ERROR: deployment.yaml から marimo / acp-agent の image タグを抽出できませんでした。" >&2
+  echo "  実装側で image 行のフォーマットが変わっていないか確認してください。" >&2
+  exit 1
+fi
+echo "[=] images from manifests/deployment.yaml:"
+echo "    MARIMO_IMAGE=${MARIMO_IMAGE}"
+echo "    ACP_IMAGE   =${ACP_IMAGE}"
 
 # -------- 前提チェック --------
 for tool in docker kind kubectl; do

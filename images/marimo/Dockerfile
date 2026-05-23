@@ -11,19 +11,21 @@
 # - site-packages と /usr/local/bin は appuser 所有なので、root昇格なしで
 #   pip install が成功する。
 #
-# 再現性のためタグを固定する(:latest だと upstream 変更で build が壊れうる。
-# 特に本ファイルが依拠する --mcp は experimental flag)。
+# 再現性のため、base image と extras インストールの双方で同一の
+# MARIMO_VERSION を参照する(:latest や unpinned だと upstream 変更で
+# build が壊れうる。特に本ファイルが依拠する --mcp は experimental flag)。
 # バージョン上げ時は実機検証(--mcp-allow-remote 無しで繋がるか含む)した上で
-# 切り替えること。
-FROM ghcr.io/marimo-team/marimo:0.23.8
+# ここの ARG だけ書き換えれば良い設計。
+ARG MARIMO_VERSION=0.23.8
+FROM ghcr.io/marimo-team/marimo:${MARIMO_VERSION}
 
-# 既存の marimo インストールに mcp extras だけ追加する形になる。
-# (marimo パッケージ自体は再インストールされない/同バージョン維持)
-RUN pip install --no-cache-dir --user --no-warn-script-location \
-        "marimo[mcp]" \
- || pip install --no-cache-dir "marimo[mcp]"
-# ↑ 環境によって --user / system のどちらが効くか変わるため両方試行。
-#   appuser が /usr/local/lib/.../site-packages を所有しているのでどちらでも入る。
+# FROM を跨ぐと ARG は再宣言が必要(Dockerfileの仕様)。
+ARG MARIMO_VERSION
+
+# mcp extras を base と同じバージョンで pin して入れる。
+# 未 pin だと marimo 自体が silent に upgrade されて base image とのズレや
+# --mcp の hidden 仕様変更を踏むリスクがある。
+RUN pip install --no-cache-dir "marimo[mcp]==${MARIMO_VERSION}"
 
 # 公式CMDは:
 #   sh -c "exec marimo edit --no-token -p $PORT --host $HOST"
