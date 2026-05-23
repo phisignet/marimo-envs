@@ -18,8 +18,12 @@ NS="marimo"
 # タグが drift する事故(片方だけ更新したケース)を構造的に排除する。
 extract_image() {
   # 例: "image: marimo-envs/marimo:0.1.0  # comment" → "marimo-envs/marimo:0.1.0"
-  grep -E "^[[:space:]]+image:[[:space:]]+$1" manifests/deployment.yaml \
-    | head -1 | awk '{print $2}'
+  #
+  # 注: set -euo pipefail 下では grep 未マッチ (exit 1) で関数自体が即終了し、
+  # 下の [[ -z ... ]] の親切なエラーメッセージに辿り着けない。
+  # { ...; } || true で握りつぶし、空文字を返して後段チェックに委ねる。
+  { grep -E "^[[:space:]]+image:[[:space:]]+$1" manifests/deployment.yaml \
+      | head -1 | awk '{print $2}'; } || true
 }
 MARIMO_IMAGE="$(extract_image 'marimo-envs/marimo:')"
 ACP_IMAGE="$(extract_image   'marimo-envs/acp-agent:')"
