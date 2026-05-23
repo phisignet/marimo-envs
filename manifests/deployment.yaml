@@ -32,9 +32,11 @@ spec:
       containers:
         # ---------------------------------------------------------------
         # marimo: ノートブックエディタ本体。公式イメージに marimo[mcp] extras を
-        # 追加した派生イメージ(images/marimo/Dockerfile)。CMDで
-        #   marimo edit --no-token --mcp --mcp-allow-remote -p $PORT --host $HOST
-        # を起動するので、PORT/HOST の env だけ上書きすれば --mcp も有効化される。
+        # 追加した派生イメージ(images/marimo/Dockerfile)。CMDは
+        #   marimo edit --no-token --mcp [--mcp-allow-remote] -p $PORT --host $HOST
+        # の形で、--mcp は常時ON、--mcp-allow-remote は env
+        # MARIMO_ALLOW_REMOTE_MCP=1 のときだけ opt-in で付与される(デフォルトOFF)。
+        # 通常は PORT/HOST の env だけ上書きすれば --mcp 有効で起動する。
         # ---------------------------------------------------------------
         - name: marimo
           image: marimo-envs/marimo:0.1.0  # ローカルビルド → kind load

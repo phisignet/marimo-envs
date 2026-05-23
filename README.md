@@ -78,7 +78,7 @@ marimo UI を開いたら:
 | パス | 役割 |
 |---|---|
 | `kind/cluster.yaml` | kindクラスタ設定。`extraPortMappings` で 2718/3017 を LAN に出す |
-| `images/marimo/Dockerfile` | marimo公式イメージ + `marimo[mcp]` extras + `--mcp --mcp-allow-remote` 起動 |
+| `images/marimo/Dockerfile` | marimo公式イメージ + `marimo[mcp]` extras。`--mcp` を常時ON、`--mcp-allow-remote` は env `MARIMO_ALLOW_REMOTE_MCP=1` opt-in(デフォルトOFF) |
 | `images/acp-agent/Dockerfile` | ACPサイドカーイメージ(node + stdio-to-ws + claude-code-acp + Claude Code SDK) |
 | `images/acp-agent/entrypoint.sh` | 起動時にmarimoのMCPサーバーをClaude Codeに自動登録 |
 | `manifests/namespace.yaml` | 専用 namespace `marimo` |
