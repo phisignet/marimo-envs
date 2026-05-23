@@ -125,6 +125,25 @@ kubectl -n marimo exec deploy/marimo -c acp-agent -- claude mcp list
 
 marimo UI のエージェントパネルで、Claude に「現在のMCPツール一覧を教えて」のように聞いた際、`mcp__marimo__get_notebook_errors` などの `mcp__marimo__*` ツールが現れていれば成功。なお実際に提供されるツールは `mcp.md` 公式記載より多い(`lint_notebook`, `get_cell_outputs`, `get_cell_dependency_graph` 等)。
 
+### ⚠️ Step 1 における MCP のセキュリティ前提
+
+本構成の Step 1 では以下を **意図的に許容している**:
+
+- **MCPは無認証で外部到達可能**: marimo は `--no-token` で動いているため、`/mcp/server`
+  エンドポイントも `RequiresEditMiddleware` を素通りする。`http://<LAN_IP>:2718/mcp/server`
+  に到達できる相手なら、`get_cell_runtime_data` 等の読み書きツールを叩ける。
+- **同Pod内 localhost 通信のみで動作**: ACPサイドカーから localhost 接続のため、
+  `--mcp-allow-remote`(DNS rebinding 保護を無効化するフラグ)は**デフォルトOFF**にしている。
+  外部ホスト名から MCP を叩く構成にする場合のみ、env `MARIMO_ALLOW_REMOTE_MCP=1` で opt-in する。
+
+**Step 1 で許容する根拠と緩和策:**
+- 用途は信頼ネットワーク(社内LAN/VPN)内のPoC運用に限定
+- ホスト側ファイアウォール(`ufw` / `firewalld`)で 2718, 3017 を必要なネットワークのみに絞ること推奨
+- Step 4 で nginx を前段に置く際、`/mcp/server` も含めて認証を載せる
+- TLSはStep 4 以降(LB/Ingress導入時)で考慮
+
+不特定多数からアクセスされる環境では、本構成を絶対に使わないこと。
+
 ## 今後のステップ(プロジェクトロードマップ)
 
 | Step | 内容 | 主な変更点 |

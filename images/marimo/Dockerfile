@@ -10,7 +10,12 @@
 # - USER appuser (uid/gid 1000)、WORKDIR /app
 # - site-packages と /usr/local/bin は appuser 所有なので、root昇格なしで
 #   pip install が成功する。
-FROM ghcr.io/marimo-team/marimo:latest
+#
+# 再現性のためタグを固定する(:latest だと upstream 変更で build が壊れうる。
+# 特に本ファイルが依拠する --mcp は experimental flag)。
+# バージョン上げ時は実機検証(--mcp-allow-remote 無しで繋がるか含む)した上で
+# 切り替えること。
+FROM ghcr.io/marimo-team/marimo:0.23.8
 
 # 既存の marimo インストールに mcp extras だけ追加する形になる。
 # (marimo パッケージ自体は再インストールされない/同バージョン維持)
@@ -22,7 +27,15 @@ RUN pip install --no-cache-dir --user --no-warn-script-location \
 
 # 公式CMDは:
 #   sh -c "exec marimo edit --no-token -p $PORT --host $HOST"
-# これに --mcp(MCPサーバー有効化)と --mcp-allow-remote(DNSリバインディング
-# 保護を無効化。同Pod内localhost通信でもHostヘッダ検査で蹴られる可能性を排除)
-# を加える。
-CMD ["sh", "-c", "exec marimo edit --no-token --mcp --mcp-allow-remote -p $PORT --host $HOST"]
+#
+# 本構成では以下の方針:
+# - --mcp は常にON(MCPサーバーがこのプロジェクトの存在意義)
+# - --mcp-allow-remote は **デフォルトOFF**。env MARIMO_ALLOW_REMOTE_MCP=1
+#   が設定された時だけ付与する opt-in 方式。
+#
+# 理由: --mcp-allow-remote は DNS rebinding 保護(Hostヘッダ検査)を無効化する。
+# 同Pod内ACPサイドカーは `http://localhost:2718/mcp/server` に Host=localhost
+# で繋ぐので無効化しなくても通る(2026-05実機検証済)。
+# nginx 等の前段ホスト名で受ける構成に拡張する際だけ env で有効化する。
+ENV MARIMO_ALLOW_REMOTE_MCP=""
+CMD ["sh", "-c", "ALLOW=; [ \"$MARIMO_ALLOW_REMOTE_MCP\" = \"1\" ] && ALLOW=\"--mcp-allow-remote\"; exec marimo edit --no-token --mcp $ALLOW -p $PORT --host $HOST"]

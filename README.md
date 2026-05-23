@@ -123,6 +123,13 @@ ACPで接続したClaude Codeは、以下を使ってノートブックを操作
 - **3017 を直接 LAN に露出**: 本来は Ingress に集約したいが、marimo フロントエンドが
   ポートをハードコードしているため Step 1 では直接公開する。将来の対策は
   [docs/SETUP.md](docs/SETUP.md) の「今後のステップ」を参照。
+- **MCPエンドポイント `/mcp/server` も認証なしで LAN 公開**: marimoポート 2718 と
+  同じ口に乗っているため、`http://<LAN_IP>:2718/mcp/server` も到達可能。
+  `--no-token` 下では `RequiresEditMiddleware` も素通りするため、LANに居る人なら
+  誰でもノートブックの読み書きツールを叩ける。Step 1 はあくまで LAN/VPN 前提で
+  運用、Step 4 で nginx に認証を載せて塞ぐ。なお `--mcp-allow-remote`
+  (DNS rebinding 保護無効化フラグ)は **デフォルトOFF** にしてあり、ホスト名で
+  叩く構成に拡張する際だけ env `MARIMO_ALLOW_REMOTE_MCP=1` で opt-in する。
 
 ## 関連 Issue / 参考
 - marimo Agents 公式: https://docs.marimo.io/guides/editor_features/agents/
