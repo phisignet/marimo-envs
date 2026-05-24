@@ -16,8 +16,10 @@ spec:
     spec:
       containers:
         - name: nginx
-          # Alpine版でサイズ削減、:1.27 で固定して再現性確保
-          image: nginx:1.27-alpine
+          # Alpine版でサイズ削減、patchまで固定して再現性確保
+          # (他コンポーネントも marimo 0.23.8 / stdio-to-ws 0.2.0 等 patch まで pin)。
+          # バージョン上げ時は実機で `nginx -v` 確認後に切り替えること。
+          image: nginx:1.27.5-alpine
           ports:
             - {name: http, containerPort: 80,   protocol: TCP}
             - {name: acp,  containerPort: 3017, protocol: TCP}
