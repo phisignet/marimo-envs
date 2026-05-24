@@ -71,6 +71,31 @@ else
   kind create cluster --name "$CLUSTER_NAME" --config kind/cluster.yaml
 fi
 
+# Step 1 と Step 4 は同じ NodePort 30317 を使うため、既に Step 4 (nginx-gateway)
+# が apply 済みの状態で Step 1 を実行すると Service 作成が NodePort 競合で失敗する。
+# 早期検知して teardown を促す。bootstrap-step4.sh の対称ガード。
+if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+  conflicting=$({ kubectl --context "$KCTX" -n "$NS" get svc \
+    -o go-template='{{range .items}}{{$name := .metadata.name}}{{range .spec.ports}}{{if eq .nodePort 30317}}{{$name}}{{"\n"}}{{end}}{{end}}{{end}}' \
+    2>/dev/null | grep -v '^marimo$' | grep -v '^$' | head -1; } || true)
+  if [[ -n "$conflicting" ]]; then
+    cat >&2 <<EOF
+ERROR: NodePort 30317 が既に Service '${conflicting}' に割り当てられています。
+   Step 4 (manifests/step4/nginx-deployment.yaml) が同じ NodePort を使うため、
+   Step 4 が適用済みの状態で Step 1 を実行すると競合します。先に teardown してください:
+
+       ./scripts/teardown.sh   # kindクラスタごと削除、その後再実行
+
+   または Step 4 の nginx-gateway Service だけ手動で消す:
+       kubectl --context ${KCTX} -n ${NS} delete \\
+           deploy/nginx-gateway svc/nginx-gateway \\
+           deploy/marimo-nb1    svc/marimo-nb1 \\
+           deploy/marimo-nb2    svc/marimo-nb2
+EOF
+    exit 1
+  fi
+fi
+
 # -------- カスタムイメージ群 --------
 echo "[+] marimo拡張イメージ(marimo[mcp]入り)をビルド: ${MARIMO_IMAGE}"
 docker build -t "$MARIMO_IMAGE" images/marimo
@@ -143,10 +168,13 @@ cat <<'EOF'
    3. ドロップダウンから "Claude" を選択
    4. ブラウザは ws://<同じホスト>:3017/message に自動接続します
 
- 状態確認:
-   kubectl -n marimo get pods,svc
-   kubectl -n marimo logs deploy/marimo -c marimo
-   kubectl -n marimo logs deploy/marimo -c acp-agent
+ 状態確認(current context が別クラスタの可能性に備えて --context を明示):
+   kubectl --context kind-marimo -n marimo get pods,svc
+   kubectl --context kind-marimo -n marimo logs deploy/marimo -c marimo
+   kubectl --context kind-marimo -n marimo logs deploy/marimo -c acp-agent
+
+ (常に kind-marimo を使うなら一度だけ default に固定する手もある:
+   kubectl config use-context kind-marimo)
 
  後片付け:
    ./scripts/teardown.sh
