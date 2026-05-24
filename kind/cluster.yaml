@@ -1,27 +1,38 @@
-# kind クラスタ設定。Step 1(1人での試用)向け。
+# kind クラスタ設定。
+# Step 1(1人, 2718/3017直接公開)と Step 4(複数人, nginx前段経由)の
+# 両方を1つの設定でサポートする(余分なポートを開けっぱなしにしてもコストはない)。
 #
-# 重要: marimoのACPエージェント(Claude Code = ポート3017)は、ブラウザが
-#       window.location.hostname:3017 にハードコードで直結する仕様
-#       (`frontend/src/components/chat/acp/state.ts` の getAgentWebSocketUrl)。
-#       そのため marimo の 2718 と ACP の 3017 を同一ホスト名/IPで
-#       LAN に同時公開する必要がある。
+# 重要(設計の核心): marimoのACPエージェント(Claude Code = ポート3017)は
+# ブラウザが window.location.hostname:3017 にハードコードで直結する仕様
+# (`frontend/src/components/chat/acp/state.ts` の getAgentWebSocketUrl)。
+# そのため marimo の UI ポートと ACP の 3017 を「同一ホスト名/IPで」LAN に
+# 同時公開する必要がある。Step 4 では nginx 前段が :80 と :3017 の両方を
+# 受けて Host ヘッダで Pod を振り分ける。
 #
 # 戦略: kind の extraPortMappings で listenAddress: "0.0.0.0" 指定し、
-#       ホストの 2718 と 3017 を、NodePort範囲(30000-32767)内に確保した
-#       30718 / 30317 にそれぞれマップする。
+# ホスト側ポートを NodePort 範囲(30000-32767)にマップする。
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: marimo
 nodes:
   - role: control-plane
     extraPortMappings:
-      # marimo UI/サーバWS: ホスト 2718 → ノード(NodePort) 30718
-      - containerPort: 30718
-        hostPort: 2718
+      # Step 4: nginx 前段の HTTP/WS(marimo UI) - ホスト 80 → ノード 30080
+      - containerPort: 30080
+        hostPort: 80
         listenAddress: "0.0.0.0"
         protocol: TCP
-      # ACPエージェント(claude-code-acp): ホスト 3017 → ノード(NodePort) 30317
+
+      # Step 1/4 共用: ACPエージェント(claude-code-acp) - ホスト 3017 → ノード 30317
+      # Step 1 では marimo Pod 直結、Step 4 では nginx 経由で各 Pod に振り分け
       - containerPort: 30317
         hostPort: 3017
+        listenAddress: "0.0.0.0"
+        protocol: TCP
+
+      # Step 1 用: marimo UI/サーバWS - ホスト 2718 → ノード 30718
+      # Step 4 では 80 経由でアクセスするため不使用だが、互換のため残す
+      - containerPort: 30718
+        hostPort: 2718
         listenAddress: "0.0.0.0"
         protocol: TCP

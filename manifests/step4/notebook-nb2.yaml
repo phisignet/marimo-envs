@@ -1,0 +1,93 @@
+# notebook 環境 #2 (nb2) - PVC + Deployment + Service の1セット。
+# 内容は notebook-nb1.yaml と同型。`sed 's/nb1/nb2/g'` で生成可能。
+#
+# Step 4 では nginx が Hostヘッダ nb1.<IP>.nip.io / nb2.<IP>.nip.io で
+# それぞれの Service に振り分ける。
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: marimo-workspace-nb2
+  namespace: marimo
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marimo-nb2
+  namespace: marimo
+  labels: {app: marimo, tenant: nb2}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}  # RWO PVCのため
+  selector:
+    matchLabels: {app: marimo, tenant: nb2}
+  template:
+    metadata:
+      labels: {app: marimo, tenant: nb2}
+    spec:
+      securityContext: {fsGroup: 1000}
+      containers:
+        - name: marimo
+          image: marimo-envs/marimo:0.1.0
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - name: PORT
+              value: "2718"
+            - name: HOST
+              value: "0.0.0.0"
+          ports:
+            - {name: marimo, containerPort: 2718, protocol: TCP}
+          volumeMounts:
+            - {name: workspace, mountPath: /workspace}
+          readinessProbe:
+            httpGet: {path: /healthz, port: marimo}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: {cpu: "200m", memory: "512Mi"}
+            limits: {memory: "2Gi"}
+
+        - name: acp-agent
+          image: marimo-envs/acp-agent:0.1.0
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: claude-code-token  # 全テナント共通の1つのSecretを共有
+                  key: token
+            - name: DISABLE_AUTOUPDATER
+              value: "1"
+          ports:
+            - {name: acp, containerPort: 3017, protocol: TCP}
+          volumeMounts:
+            - {name: workspace, mountPath: /workspace}
+          resources:
+            requests: {cpu: "200m", memory: "512Mi"}
+            limits: {memory: "2Gi"}
+
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: marimo-workspace-nb2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: marimo-nb2
+  namespace: marimo
+  labels: {app: marimo, tenant: nb2}
+spec:
+  type: ClusterIP  # nginx 経由でしか触らないので内部 Service で十分
+  selector: {app: marimo, tenant: nb2}
+  ports:
+    - {name: marimo, port: 2718, targetPort: marimo, protocol: TCP}
+    - {name: acp,    port: 3017, targetPort: acp,    protocol: TCP}

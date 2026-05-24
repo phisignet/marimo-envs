@@ -1,0 +1,119 @@
+# nginx 設定: Hostヘッダで marimo Pod を振り分ける。
+#
+# 2つのlistenerが必要(marimoのフロントエンド実装由来の制約):
+#   :80    → ブラウザ HTTP UI + marimoサーバWS(/ws 等、全パス)
+#   :3017  → ACP WebSocket(/message) ← ブラウザJSがハードコード
+#
+# 両方とも Host ヘッダで nb1.*.nip.io / nb2.*.nip.io を判別して別 Service に
+# proxy_pass する。WS Upgrade(Connection / Upgrade ヘッダ)対応必須。
+#
+# nip.io は次のように解決される(例: LAN IP=192.168.64.32):
+#   nb1.192.168.64.32.nip.io → 192.168.64.32
+#   nb2.192.168.64.32.nip.io → 192.168.64.32
+# どちらも同じIP=この nginx に来るので、Host ヘッダだけが振り分けの根拠。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: marimo
+data:
+  nginx.conf: |
+    worker_processes auto;
+    events { worker_connections 1024; }
+
+    http {
+      # WebSocket Upgrade を素通しするための定型マッピング。
+      # Connection ヘッダが Upgrade のときだけ upgrade を返す。
+      map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+      }
+
+      # 長時間 WS の切断防止
+      proxy_read_timeout  3600s;
+      proxy_send_timeout  3600s;
+      keepalive_timeout   3600s;
+
+      # アクセスログをstdoutへ
+      access_log /dev/stdout combined;
+      error_log  /dev/stderr warn;
+
+      # ----- :80 marimo UI + marimo自身のWS -----
+      server {
+        listen 80 default_server;
+        server_name ~^nb1\..+\.nip\.io$;
+
+        location / {
+          proxy_pass http://marimo-nb1.marimo.svc.cluster.local:2718;
+          proxy_set_header Host              $host;
+          proxy_set_header X-Real-IP         $remote_addr;
+          proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+
+          # marimo自身のWS(セルの実行結果ストリーム等)もここを通る
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade    $http_upgrade;
+          proxy_set_header Connection $connection_upgrade;
+        }
+      }
+      server {
+        listen 80;
+        server_name ~^nb2\..+\.nip\.io$;
+
+        location / {
+          proxy_pass http://marimo-nb2.marimo.svc.cluster.local:2718;
+          proxy_set_header Host              $host;
+          proxy_set_header X-Real-IP         $remote_addr;
+          proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade    $http_upgrade;
+          proxy_set_header Connection $connection_upgrade;
+        }
+      }
+      # 不明なHost(直IPアクセス等)は明示的に404でPodの存在を漏らさない
+      server {
+        listen 80;
+        server_name _;
+        return 404 "Unknown host. Use http://nbX.<LAN_IP>.nip.io/\n";
+        default_type text/plain;
+      }
+
+      # ----- :3017 ACPエージェント WS -----
+      server {
+        listen 3017 default_server;
+        server_name ~^nb1\..+\.nip\.io$;
+
+        location / {
+          proxy_pass http://marimo-nb1.marimo.svc.cluster.local:3017;
+          proxy_set_header Host              $host;
+          proxy_set_header X-Real-IP         $remote_addr;
+          proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade    $http_upgrade;
+          proxy_set_header Connection $connection_upgrade;
+        }
+      }
+      server {
+        listen 3017;
+        server_name ~^nb2\..+\.nip\.io$;
+
+        location / {
+          proxy_pass http://marimo-nb2.marimo.svc.cluster.local:3017;
+          proxy_set_header Host              $host;
+          proxy_set_header X-Real-IP         $remote_addr;
+          proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade    $http_upgrade;
+          proxy_set_header Connection $connection_upgrade;
+        }
+      }
+      server {
+        listen 3017;
+        server_name _;
+        return 404;
+      }
+    }
