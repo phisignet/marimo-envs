@@ -69,6 +69,11 @@ export CLAUDE_CODE_OAUTH_TOKEN='paste-here'
 ./scripts/bootstrap-step4.sh
 ```
 
+> ⚠️ Step 1 と Step 4 は同じクラスタ名 `marimo` と同じ NodePort `30317` を使うため、
+> 既に Step 1 が apply 済みの状態で Step 4 を実行すると Service 作成が NodePort 競合で
+> 失敗する。`bootstrap-step4.sh` は事前にこれを検知して停止し、`teardown.sh` を促す。
+> Step 切り替え時はクラスタ削除 → bootstrap の流れに統一するのが安全。
+
 Step 1 との違い:
 - kindクラスタの `extraPortMappings` に **`hostPort: 80`** が必要(`kind/cluster.yaml` で対応済)
 - `manifests/step4/` 配下を apply:
@@ -196,11 +201,19 @@ marimo UI のエージェントパネルで、Claude に「現在のMCPツール
   エンドポイントも `RequiresEditMiddleware` を素通りする。Step 1 なら
   `http://<LAN_IP>:2718/mcp/server`、Step 4 なら `http://nbN.<LAN_IP>.nip.io/mcp/server`
   に到達できる相手なら、`get_cell_runtime_data` 等の読み書きツールを叩ける。
-- **`--mcp-allow-remote` は デフォルトOFF**: DNS rebinding 保護を無効化するフラグだが、
-  本構成のACPサイドカーは Pod 内 `localhost:2718` 接続なので不要。Step 4 でも nginx →
-  Service → Pod の経路で Pod 内では Host=localhost で着くため不要。外部から
-  直接 nip.io ホスト名で `/mcp/server` を叩くケースがあるなら env
-  `MARIMO_ALLOW_REMOTE_MCP=1` で opt-in する。
+- **`--mcp-allow-remote` は デフォルトOFF**(両 Step 共通の現状設定): DNS rebinding 保護
+  (= 許可ホストヘッダ以外を marimo が弾く機能)を無効化するフラグ。
+  - **Step 1** はACPサイドカーが Pod 内 `localhost:2718` で繋ぐので Host=localhost
+    となり保護を素通りできる(=フラグ不要、デフォルトOFFで動く)
+  - **Step 4** は ACPサイドカーは同じく Pod 内 `localhost:3017` 経由で nginx を通らないが、
+    **ブラウザから直接 `http://nbN.<LAN_IP>.nip.io/mcp/server` を叩く動線が新たに増える**。
+    nginx は `proxy_set_header Host $host;` で `Host: nbN.<LAN_IP>.nip.io` を marimo に
+    透過するため、現状の `--mcp-allow-remote` OFF では **ブラウザから直接 MCP を叩く動線
+    だけは DNS rebinding 保護で 421 等になる**(ACPエージェント経由は引き続き動く)。
+    ブラウザから直接 MCP エンドポイントを叩く必要がある運用に進むなら、env
+    `MARIMO_ALLOW_REMOTE_MCP=1` で opt-in するか、nginx 側で `/mcp/server` への
+    proxy_pass だけ `proxy_set_header Host "localhost:2718";` のように書き換える方式
+    (より絞った許可)を検討。
 
 **許容する根拠と緩和策:**
 - 用途は信頼ネットワーク(家庭内LAN / 社内LAN / VPN)内のPoC運用に限定

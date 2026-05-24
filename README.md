@@ -140,6 +140,11 @@ export CLAUDE_CODE_OAUTH_TOKEN='<貼り付け>'
 > ⚠️ Claude Code チャットの shell モード(`!` プレフィックス)では履歴に env 値が
 > 残るので、トークンは普通のターミナルで実行すること。
 
+> ⚠️ Step 1 が既にデプロイ済みの状態で Step 4 を実行すると、Service の NodePort
+> (30317)が競合して失敗する。`bootstrap-step4.sh` は事前検知して停止し、
+> `./scripts/teardown.sh` での切り替えを促す。Step 同士の切り替えは
+> 常にクラスタ再作成(teardown → bootstrap)で行うのが安全。
+
 完了すると以下のURLが案内される(同じLAN上の任意のPCから):
 
 - `http://nb1.<LAN_IP>.nip.io/`
@@ -188,7 +193,13 @@ ACPで接続したClaude Codeは、以下を使ってノートブックを操作
 - プロンプト: `active_notebooks`, `errors_summary`
 
 > marimoのMCPサーバーは `http://localhost:2718/mcp/server`(HTTP)で公開され、同Pod内のACPサイドカーが起動時に `claude mcp add` で自動登録する。クライアント側は何も触らなくてよい。
-> 公式ドキュメント(`docs/guides/editor_features/mcp.md`)に載っていないツールも含まれているので、最新の一覧はPod内で `kubectl -n marimo exec deploy/<marimo-pod> -c acp-agent -- claude mcp list` または marimo UI のエージェントパネルで Claude に直接聞くのが確実。
+> 公式ドキュメント(`docs/guides/editor_features/mcp.md`)に載っていないツールも含まれているので、最新の一覧はPod内で `claude mcp list` を叩くか、marimo UI のエージェントパネルで Claude に直接聞くのが確実。Deployment名は Step1なら `marimo`、Step4なら `marimo-nb1` / `marimo-nb2`:
+> ```bash
+> # Step 1
+> kubectl -n marimo exec deploy/marimo     -c acp-agent -- claude mcp list
+> # Step 4
+> kubectl -n marimo exec deploy/marimo-nb1 -c acp-agent -- claude mcp list
+> ```
 
 ## 意図的に妥協している点(両 Step 共通)
 

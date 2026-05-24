@@ -13,7 +13,7 @@ cd "$REPO_ROOT"
 CLUSTER_NAME="marimo"
 NS="marimo"
 
-# Image タグは manifests/deployment.yaml を single source of truth として扱う。
+# Image タグは manifests/step1/ を single source of truth として扱う。
 # bootstrap.sh が build/load するタグと、kubectl apply で動かす Deployment の
 # タグが drift する事故(片方だけ更新したケース)を構造的に排除する。
 extract_image() {
@@ -22,18 +22,18 @@ extract_image() {
   # 注: set -euo pipefail 下では grep 未マッチ (exit 1) で関数自体が即終了し、
   # 下の [[ -z ... ]] の親切なエラーメッセージに辿り着けない。
   # { ...; } || true で握りつぶし、空文字を返して後段チェックに委ねる。
-  { grep -E "^[[:space:]]+image:[[:space:]]+$1" manifests/deployment.yaml \
+  { grep -REh "^[[:space:]]+image:[[:space:]]+$1" manifests/step1/ \
       | head -1 | awk '{print $2}'; } || true
 }
 MARIMO_IMAGE="$(extract_image 'marimo-envs/marimo:')"
 ACP_IMAGE="$(extract_image   'marimo-envs/acp-agent:')"
 
 if [[ -z "$MARIMO_IMAGE" || -z "$ACP_IMAGE" ]]; then
-  echo "ERROR: deployment.yaml から marimo / acp-agent の image タグを抽出できませんでした。" >&2
+  echo "ERROR: manifests/step1/ から marimo / acp-agent の image タグを抽出できませんでした。" >&2
   echo "  実装側で image 行のフォーマットが変わっていないか確認してください。" >&2
   exit 1
 fi
-echo "[=] images from manifests/deployment.yaml:"
+echo "[=] images from manifests/step1/:"
 echo "    MARIMO_IMAGE=${MARIMO_IMAGE}"
 echo "    ACP_IMAGE   =${ACP_IMAGE}"
 
@@ -82,7 +82,7 @@ kind load docker-image "$ACP_IMAGE"    --name "$CLUSTER_NAME"
 # -------- マニフェスト適用 --------
 echo "[+] Namespace と PVC を適用..."
 kubectl apply -f manifests/namespace.yaml
-kubectl apply -f manifests/pvc.yaml
+kubectl apply -f manifests/step1/pvc.yaml
 
 echo "[+] Claude OAuth トークン Secret を作成/更新..."
 kubectl -n "$NS" create secret generic claude-code-token \
@@ -90,8 +90,8 @@ kubectl -n "$NS" create secret generic claude-code-token \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "[+] Deployment と Service を適用..."
-kubectl apply -f manifests/deployment.yaml
-kubectl apply -f manifests/service.yaml
+kubectl apply -f manifests/step1/deployment.yaml
+kubectl apply -f manifests/step1/service.yaml
 
 # Secret だけ更新して Deployment マニフェスト自体は変わらないケース(=トークン更新の再実行)
 # でも、走っているPodが自動で新Secretを読み直すことはないため、明示的にrollout restartして
@@ -104,7 +104,19 @@ echo "[+] marimo Deployment の rollout を待機..."
 kubectl -n "$NS" rollout status deployment/marimo --timeout=300s
 
 # -------- アクセス情報 --------
-LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+# IPv6 や docker bridge (172.17.x.x) を避けて IPv4 のLAN IPを優先選択。
+# 環境変数 LAN_IP が指定されていればそれを優先。
+if [[ -z "${LAN_IP:-}" ]]; then
+  LAN_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
+    | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+    | grep -v -E '^(127\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)' \
+    | head -1)"
+fi
+if [[ -z "${LAN_IP:-}" ]]; then
+  LAN_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
+    | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+    | head -1)"
+fi
 cat <<EOF
 
 ====================================================================

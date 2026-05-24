@@ -47,10 +47,24 @@ EOF
   exit 1
 fi
 
-# 公開IPの取得(LAN第1IPv4)
-LAN_IP="$(hostname -I | awk '{print $1}')"
+# 公開IPの取得(LAN内のIPv4を優先選択)
+# 注: `hostname -I | awk '{print $1}'` は環境によって IPv6 や docker bridge
+# (172.17.x.x) が先に来る可能性があるため、明示的に IPv4 を抽出する。
+# 環境変数 LAN_IP が手動指定されていればそれを優先。
+if [[ -z "${LAN_IP:-}" ]]; then
+  LAN_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
+    | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+    | grep -v -E '^(127\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)' \
+    | head -1)"
+fi
+if [[ -z "${LAN_IP:-}" ]]; then
+  # フォールバック: docker bridge等を排除しすぎて空になった場合は素直に第1IPv4
+  LAN_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
+    | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+    | head -1)"
+fi
 if [[ -z "$LAN_IP" ]]; then
-  echo "ERROR: LAN IP を取得できませんでした(hostname -I が空)。" >&2
+  echo "ERROR: LAN IP を取得できませんでした。手動で LAN_IP=<your-ip> を export してから再実行してください。" >&2
   exit 1
 fi
 echo "[=] LAN_IP=${LAN_IP}"
@@ -61,6 +75,26 @@ echo "[=] LAN_IP=${LAN_IP}"
 echo "[+] ホスト側 80 ポートが空いているか念のため確認..."
 if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:)80$'; then
   echo "  WARN: 既に :80 が LISTEN 中の可能性があります。bootstrap が失敗したら確認を。" >&2
+fi
+
+# NodePort 30317 は Step 1 の Service も同名で使用するため、既に Step 1 が
+# 適用済みのクラスタで step4 を走らせると nginx-gateway Service 作成が
+# NodePort 競合で失敗する。早期検知して teardown を促す。
+if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$" \
+   && kubectl --context "kind-${CLUSTER_NAME}" -n "$NS" get svc 2>/dev/null \
+        | awk '{print $5}' | grep -qE '(^|,)30317:' \
+   && ! kubectl --context "kind-${CLUSTER_NAME}" -n "$NS" get svc nginx-gateway >/dev/null 2>&1; then
+  cat >&2 <<EOF
+ERROR: NodePort 30317 が既に他の Service に割り当てられています。
+   Step 1 (manifests/step1/service.yaml) が同じ NodePort を使うため、Step 1 が
+   適用済みの状態で Step 4 を実行すると競合します。先に teardown してください:
+
+       ./scripts/teardown.sh   # kindクラスタごと削除、その後再実行
+
+   または Step 1 の Service だけ手動で消す:
+       kubectl -n marimo delete deploy/marimo svc/marimo
+EOF
+  exit 1
 fi
 
 # -------- kind クラスタ --------
