@@ -36,34 +36,39 @@ port は `agentId` 別に固定:
 
 # Step 1: 1人での試用
 
-## 構成図(Step 1)
+## 構成図(Step 1: Codex+Ollama)
 
 ```
 ブラウザ
   │ ① http://HOST:2718/        marimo UI / marimo自身のWebSocket
-  │ ② ws://HOST:3017/message   ACPエージェントへ直結
+  │ ② ws://HOST:3021/message   ACPエージェント(Codex)へ直結
   ▼
 ┌─ Service (NodePort, marimo namespace) ───────────────┐
-│   2718 → nodePort 30718        3017 → nodePort 30317 │
+│   2718 → nodePort 30718        3021 → nodePort 30321 │
 └──────────────────────────────────────────────────────┘
                               │
                 kind extraPortMappings (LAN公開)
                               │
 ┌─ Pod ────────────────────────────────────────────────┐
-│  [marimo container]            [acp-agent container] │
-│   marimo edit :2718             stdio-to-ws :3017    │
-│                                  └ claude-code-acp   │
-│                                     └ Claude Code SDK│
+│  [marimo container]            [codex-acp container] │
+│   marimo edit :2718             stdio-to-ws :3021    │
+│   /etc/codex-catalog/           └ codex-acp          │
+│   (catalog ConfigMap注入)         └ Codex CLI         │
 │            └── 共有Volume(PVC) /workspace ──┘        │
 └──────────────────────────────────────────────────────┘
+                              │
+                              ▼  HTTP /v1/responses
+                       [host: Ollama]
+                       (社内/家庭内、認証不要)
 ```
 
 ## クイックスタート(Step 1)
 
 ### 0. 前提
 - Linux + Docker(ログインユーザーが `docker` グループに所属)
-- Claude Pro / Max サブスク
+- Ollama 起動済み(`OLLAMA_HOST=0.0.0.0:11434` で listen、Pod から到達可能)
 - LANで到達したいなら `hostname -I` で取れる IP を確認
+- **Claude サブスクや OpenAI API キーは不要**(Ollama 経由のため)
 
 ### 1. ツール導入(初回のみ)
 ```bash
@@ -108,10 +113,9 @@ export OLLAMA_BASE_URL='http://192.168.x.x:11434/v1'
 - LAN他PC: `http://<このマシンのLAN_IP>:2718/`
 
 marimo UI を開いたら:
-1. **Settings → Lab → "agents" を有効化**(初回のみ。ブラウザ側設定)
-2. 左サイドバーのエージェントアイコン
-3. **"Codex" を選択**(Claude ではない) → そのまま会話開始
-4. ブラウザは `ws://<同じホスト>:3021/message` に自動接続(Codex用 port)
+1. 左サイドバーのエージェントアイコンを開く(Lab フラグ `external_agents` は image レベルで事前有効化済、手動操作不要)
+2. **"Codex" を選択**(Claude ではない) → そのまま会話開始
+3. ブラウザは `ws://<同じホスト>:3021/message` に自動接続(Codex 用 port)
 
 ### 5. 後片付け
 ```bash
@@ -199,14 +203,15 @@ ACP WS は同じホスト名の `:3017` に自動接続される(nginxがHostヘ
 
 | パス | 役割 |
 |---|---|
-| `kind/cluster-step1.yaml` | Step 1 用 kind 設定。2718/3017 を LAN に bind(:80 は触らない) |
-| `kind/cluster-step4.yaml` | Step 4 用 kind 設定。80/3017 を LAN に bind(:2718 は使わない) |
+| `kind/cluster-step1.yaml` | Step 1 用 kind 設定。本ブランチでは 2718/**3021** を LAN に bind(:80 は触らない、Codex は port 3021) |
+| `kind/cluster-step4.yaml` | Step 4 用 kind 設定。80/3017 を LAN に bind(:2718 は使わない、Claude 構成) |
 | `images/marimo/Dockerfile` | marimo公式イメージ + `marimo[mcp]` extras。`--mcp` 常時ON、`--mcp-allow-remote` は env `MARIMO_ALLOW_REMOTE_MCP=1` opt-in |
-| `images/acp-agent/Dockerfile` | ACPサイドカーイメージ(node + stdio-to-ws + claude-code-acp + Claude Code SDK) |
-| `images/acp-agent/entrypoint.sh` | 起動時にmarimoのMCPサーバーをClaude Codeに自動登録 |
+| **`images/codex-acp/Dockerfile`** | **本ブランチ追加**: Codex 用 ACPサイドカー(node + stdio-to-ws + @openai/codex@0.133.0 + @zed-industries/codex-acp@0.15.0) |
+| **`images/codex-acp/entrypoint.sh`** | **本ブランチ追加**: 起動時に `~/.codex/config.toml` を env から動的生成 |
+| `images/acp-agent/Dockerfile` | Claude Code 用 ACPサイドカー(main 構成)。本ブランチでは未使用 |
 | `manifests/namespace.yaml` | 専用 namespace `marimo`(Step1/4共通) |
-| `manifests/secret.example.yaml` | Secret形式参考(実体はbootstrapで生成、Step1/4共通) |
-| `manifests/step1/{pvc,deployment,service}.yaml` | Step 1: 単一Pod + NodePort(2718/3017) |
+| `manifests/secret.example.yaml` | Secret形式参考(本ブランチでは Secret 使わず ConfigMap 化、Step4 用に残置) |
+| **`manifests/step1/{pvc,deployment,service}.yaml`** | **本ブランチで Codex 化済**: 単一Pod + NodePort(2718/3021)、codex-acp + 2 ConfigMap(codex-config / codex-catalog) |
 | `manifests/step4/notebook-nb{1,2}.yaml` | Step 4: テナント別 PVC+Deployment+Service(ClusterIP) |
 | `manifests/step4/nginx-{configmap,deployment}.yaml` | Step 4: 前段 nginx と Hostヘッダ振り分け設定 |
 | `scripts/bootstrap.sh` | Step 1 用 |
@@ -215,14 +220,14 @@ ACP WS は同じホスト名の `:3017` に自動接続される(nginxがHostヘ
 | `scripts/teardown.sh` | クラスタ削除(PVC含む。Step1/4共通) |
 | `docs/SETUP.md` | 詳細手順とトラブルシューティング |
 
-## エージェントが使えるツール(Step 1/4 共通)
+## エージェントが使えるツール
 
-ACPで接続したClaude Codeは、以下を使ってノートブックを操作・観察できる:
+ACPで接続したエージェント(Claude Code / Codex / 他)は、以下を使ってノートブックを操作・観察できる:
 
 **ACPプロトコル由来(常時利用可)**
 - `Read` / `Edit` / `Write` — marimoノートブック(.py)の読み書き
 
-**marimoのMCPサーバー由来**(本構成では `--mcp` 有効化済みで自動登録。Pod内で `mcp__marimo__*` として見える)
+**marimoのMCPサーバー由来**(本構成では `--mcp` 有効化済み。Pod内で `mcp__marimo__*` として見える)
 - `get_active_notebooks` — 開いているノートブック一覧
 - `get_lightweight_cell_map` — 全セルの概要
 - `get_cell_runtime_data` — セルのコード、エラー、変数情報
@@ -235,13 +240,10 @@ ACPで接続したClaude Codeは、以下を使ってノートブックを操作
 - `lint_notebook` — ノートブックのLint実行
 - プロンプト: `active_notebooks`, `errors_summary`
 
-> marimoのMCPサーバーは `http://localhost:2718/mcp/server`(HTTP)で公開され、同Pod内のACPサイドカーが起動時に `claude mcp add` で自動登録する。クライアント側は何も触らなくてよい。
-> 公式ドキュメント(`docs/guides/editor_features/mcp.md`)に載っていないツールも含まれているので、最新の一覧はPod内で `claude mcp list` を叩くか、marimo UI のエージェントパネルで Claude に直接聞くのが確実。Deployment名は Step1なら `marimo`、Step4なら `marimo-nb1` / `marimo-nb2`(`--context` を明示することで current context が別クラスタを指していても安全):
+> marimoのMCPサーバーは `http://localhost:2718/mcp/server`(HTTP)で公開される。Claude Code 構成では起動時に自動登録するが、Codex CLI では現状自動登録の仕組みは入っていない(必要なら entrypoint.sh で `codex mcp` 相当を追加)。
+> Claude 構成のサイドカー内で MCP 設定確認:
 > ```bash
-> # Step 1
-> kubectl --context kind-marimo -n marimo exec deploy/marimo     -c acp-agent -- claude mcp list
-> # Step 4
-> kubectl --context kind-marimo -n marimo exec deploy/marimo-nb1 -c acp-agent -- claude mcp list
+> kubectl --context kind-marimo -n marimo exec deploy/marimo -c acp-agent -- claude mcp list
 > ```
 
 ## 意図的に妥協している点(両 Step 共通)

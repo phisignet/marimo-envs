@@ -120,7 +120,73 @@ echo "[+] Codex 接続用 ConfigMap を作成/更新..."
 kubectl --context "$KCTX" -n "$NS" create configmap codex-config \
   --from-literal=ollama_base_url="$OLLAMA_BASE_URL" \
   --from-literal=model="$CODEX_MODEL" \
-  --from-literal=wire_api="$CODEX_WIRE_API" \
+  --dry-run=client -o yaml | kubectl --context "$KCTX" apply -f -
+
+# codex-catalog: Codex CLI の「Model metadata for X not found」警告を抑制する
+# model.json を ConfigMap 化して Pod に注入する(deployment.yaml で必須参照)。
+# 内容は Ollama /api/show の出力 (context_length, capabilities) を元に、
+# Codex の buildCodexModelEntry (cmd/launch/codex.go) と同じフィールド構造で
+# 動的組み立てする。モデル変更時も bootstrap 再実行で自動追従。
+echo "[+] codex-catalog ConfigMap(model.json)を Ollama /api/show から動的生成..."
+# /api/show は /api/ 系(OpenAI互換ではない)。OLLAMA_BASE_URL の /v1 を /api/show に置換
+OLLAMA_API_SHOW_URL="${OLLAMA_BASE_URL%/v1}/api/show"
+CATALOG_TMP="$(mktemp -d)/model.json"
+trap 'rm -rf "$(dirname "$CATALOG_TMP")"' EXIT
+
+if ! curl -fsS -X POST "$OLLAMA_API_SHOW_URL" \
+    -H 'Content-Type: application/json' \
+    -d "{\"name\":\"${CODEX_MODEL}\"}" \
+    > "$(dirname "$CATALOG_TMP")/api-show.json" 2>/dev/null; then
+  echo "ERROR: Ollama /api/show 呼び出し失敗。Ollama が ${OLLAMA_API_SHOW_URL} で到達可能でモデル '${CODEX_MODEL}' が pull 済みであることを確認してください。" >&2
+  exit 1
+fi
+
+# Python で /api/show の応答から model.json を組み立てる。
+# 取得項目:
+#   - model_info.<family>.context_length(モデルのコンテキスト窓)
+#   - capabilities(vision あれば input_modalities に image 追加)
+# -cloud サフィックス付きモデルは truncation mode を tokens に。
+python3 <<PYEOF > "$CATALOG_TMP"
+import json
+with open("$(dirname "$CATALOG_TMP")/api-show.json") as f:
+    show = json.load(f)
+model_name = "${CODEX_MODEL}"
+# context_length は model_info.<family>.context_length に入る(family は様々)
+ctx_len = 128_000  # fallback
+for k, v in (show.get("model_info") or {}).items():
+    if k.endswith(".context_length") and isinstance(v, int):
+        ctx_len = v
+        break
+caps = show.get("capabilities") or []
+modalities = ["text"] + (["image"] if "vision" in caps else [])
+# -cloud モデルは Codex 内部で truncation mode が tokens 扱いされる
+truncation_mode = "tokens" if model_name.endswith("-cloud") else "bytes"
+entry = {
+    "slug": model_name,
+    "display_name": model_name,
+    "context_window": ctx_len,
+    "shell_type": "default",
+    "visibility": "list",
+    "supported_in_api": True,
+    "priority": 0,
+    "truncation_policy": {"mode": truncation_mode, "limit": 10000},
+    "input_modalities": modalities,
+    "base_instructions": "",
+    "support_verbosity": True,
+    "default_verbosity": "low",
+    "supports_parallel_tool_calls": False,
+    "supports_reasoning_summaries": False,
+    "supported_reasoning_levels": [],
+    "experimental_supported_tools": [],
+}
+print(json.dumps({"models": [entry]}, indent=2))
+PYEOF
+
+echo "[=] 生成された model.json プレビュー:"
+head -10 "$CATALOG_TMP" | sed 's/^/    /'
+
+kubectl --context "$KCTX" -n "$NS" create configmap codex-catalog \
+  --from-file=model.json="$CATALOG_TMP" \
   --dry-run=client -o yaml | kubectl --context "$KCTX" apply -f -
 
 echo "[+] Deployment と Service を適用..."

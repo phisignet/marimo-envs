@@ -93,11 +93,6 @@ spec:
                 configMapKeyRef:
                   name: codex-config
                   key: model
-            - name: CODEX_WIRE_API
-              valueFrom:
-                configMapKeyRef:
-                  name: codex-config
-                  key: wire_api
           ports:
             - name: acp
               containerPort: 3021

@@ -8,10 +8,11 @@
 #                     末尾は /v1 で、スラッシュなし。
 #   CODEX_MODEL      使用モデル名(既定: gemma4:31b-cloud)
 #                     例: qwen2.5-coder:32b など。Ollama Cloud モデルなら末尾 -cloud。
-#   CODEX_WIRE_API   Codex CLI が叩く API 形式(既定: responses)
-#                     注: Codex は 2026 年に wire_api="chat" を廃止し、現在は
-#                     "responses" のみサポート(https://github.com/openai/codex/discussions/7782)。
-#                     Ollama も /v1/responses を実装済(2026-05 時点で実機検証済)。
+#
+# 注: wire_api は本構成では明示しない(Ollama 公式の Codex 統合形式に準拠、
+# デフォルト = "responses" でそのまま動く)。Codex は 2026 年に "chat" を廃止し
+# 現在は "responses" のみサポート(https://github.com/openai/codex/discussions/7782)。
+# Ollama も /v1/responses を実装済。
 set -e
 
 if [ -z "${OLLAMA_BASE_URL:-}" ]; then
@@ -21,7 +22,6 @@ if [ -z "${OLLAMA_BASE_URL:-}" ]; then
 fi
 
 MODEL="${CODEX_MODEL:-gemma4:31b-cloud}"
-WIRE_API="${CODEX_WIRE_API:-responses}"
 
 mkdir -p "${HOME}/.codex"
 # Ollama 公式の Codex 統合ドキュメント(https://docs.ollama.com/integrations/codex)
@@ -40,14 +40,15 @@ mkdir -p "${HOME}/.codex"
 #   - 文言にモデル名をハードコードする必要があり、モデル切替時にバグ要因になる
 #   - 自称は LLM の幻覚で本質的に解決困難、矯正プロンプトの副作用が大きい
 #   - 実通信先と通信内容は別途検証可能(Ollama側ログで証拠取れる)
-# model_catalog_json: ConfigMap で /home/node/.codex/model.json に注入された
-# catalog を Codex CLI に読ませる。これにより
-# 「Model metadata for X not found. Defaulting to fallback metadata」警告が抑制される。
-# 内部設計: Ollama PR #15795 が host で `ollama launch codex --config` 経由で
-# 生成するのと同等の JSON を手動組み立て(Deployment 側の codex-catalog ConfigMap)。
-# Codex の model catalog は Deployment の ConfigMap volume で
-# /etc/codex-catalog/model.json として注入される(readonly)。
-# 注入されていない環境では空文字にして警告抑制機能を無効化。
+#
+# model_catalog_json: Deployment の codex-catalog ConfigMap volume で
+# /etc/codex-catalog/model.json として注入される(readonly)JSON を Codex に読ませる。
+# これにより「Model metadata for X not found. Defaulting to fallback metadata」
+# 警告が抑制される。内部設計: Ollama PR #15795 が host で
+# `ollama launch codex --config` 経由で生成する catalog と同等の JSON を、
+# bootstrap.sh が /api/show から動的組み立てして ConfigMap 化する。
+# 注入されていない環境では空にして警告抑制機能を無効化(deployment.yaml が
+# 必須参照しているので通常は注入される)。
 CATALOG_PATH="/etc/codex-catalog/model.json"
 [ -r "$CATALOG_PATH" ] || CATALOG_PATH=""
 

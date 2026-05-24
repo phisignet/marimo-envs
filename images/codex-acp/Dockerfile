@@ -28,10 +28,15 @@ RUN apt-get update \
 # - stdio-to-ws@0.2.0: marimo-team製。NDJSON line framing がデフォルトで ACP に合致。
 # - @openai/codex: Codex CLI 本体。
 # - @zed-industries/codex-acp: ACPアダプタ(Codex → ACP)。
+#
+# バージョンを patch まで pin して再現性確保。バージョン上げ時は:
+#   1) Ollama+Codex 連携の最新 issue(ollama/ollama#14752 等)を確認
+#   2) 実機で警告抑制 / wire_api / config 形式に互換性問題が無いか検証
+#   3) PR 本文の version 記述と合わせて更新
 RUN npm install -g \
         stdio-to-ws@0.2.0 \
-        @openai/codex \
-        @zed-industries/codex-acp
+        @openai/codex@0.133.0 \
+        @zed-industries/codex-acp@0.15.0
 
 # 起動時に ~/.codex/config.toml を env から動的生成するエントリポイント。
 COPY --chown=node:node entrypoint.sh /usr/local/bin/entrypoint.sh
