@@ -12,8 +12,11 @@ cd "$REPO_ROOT"
 
 CLUSTER_NAME="marimo"
 NS="marimo"
+# 以降の kubectl 呼び出しはすべてこの context を明示する。
+# ユーザーの current context が別クラスタを指していても、誤って apply されることを防ぐ。
+KCTX="kind-${CLUSTER_NAME}"
 
-# Image タグは manifests/deployment.yaml を single source of truth として扱う。
+# Image タグは manifests/step1/ を single source of truth として扱う。
 # bootstrap.sh が build/load するタグと、kubectl apply で動かす Deployment の
 # タグが drift する事故(片方だけ更新したケース)を構造的に排除する。
 extract_image() {
@@ -22,18 +25,18 @@ extract_image() {
   # 注: set -euo pipefail 下では grep 未マッチ (exit 1) で関数自体が即終了し、
   # 下の [[ -z ... ]] の親切なエラーメッセージに辿り着けない。
   # { ...; } || true で握りつぶし、空文字を返して後段チェックに委ねる。
-  { grep -E "^[[:space:]]+image:[[:space:]]+$1" manifests/deployment.yaml \
+  { grep -REh "^[[:space:]]+image:[[:space:]]+$1" manifests/step1/ \
       | head -1 | awk '{print $2}'; } || true
 }
 MARIMO_IMAGE="$(extract_image 'marimo-envs/marimo:')"
 ACP_IMAGE="$(extract_image   'marimo-envs/acp-agent:')"
 
 if [[ -z "$MARIMO_IMAGE" || -z "$ACP_IMAGE" ]]; then
-  echo "ERROR: deployment.yaml から marimo / acp-agent の image タグを抽出できませんでした。" >&2
+  echo "ERROR: manifests/step1/ から marimo / acp-agent の image タグを抽出できませんでした。" >&2
   echo "  実装側で image 行のフォーマットが変わっていないか確認してください。" >&2
   exit 1
 fi
-echo "[=] images from manifests/deployment.yaml:"
+echo "[=] images from manifests/step1/:"
 echo "    MARIMO_IMAGE=${MARIMO_IMAGE}"
 echo "    ACP_IMAGE   =${ACP_IMAGE}"
 
@@ -63,9 +66,55 @@ fi
 # -------- kindクラスタ --------
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
   echo "[=] kind cluster '${CLUSTER_NAME}' は既に存在します。スキップ。"
+  # Step 1 が必要とする extraPortMappings (30718, 30317) が実際に
+  # bind されているか検証。Step 4 用設定で作られたクラスタが残っていると
+  # 30718 が無く Step 1 の URL が到達不能になるため、teardown を促す。
+  node_container="${CLUSTER_NAME}-control-plane"
+  missing=()
+  for p in 30718 30317; do
+    if ! docker port "$node_container" "${p}/tcp" >/dev/null 2>&1; then
+      missing+=("$p")
+    fi
+  done
+  if (( ${#missing[@]} > 0 )); then
+    cat >&2 <<EOF
+ERROR: 既存の kind クラスタ '${CLUSTER_NAME}' に Step 1 が必要なポートマッピングが
+       ありません(欠落: ${missing[*]})。
+       他の Step 用 cluster 設定で作られた可能性があります。teardown して再作成してください:
+
+           ./scripts/teardown.sh   # クラスタ削除
+           ./scripts/bootstrap.sh  # Step 1 用設定で再作成
+EOF
+    exit 1
+  fi
 else
-  echo "[+] kind cluster '${CLUSTER_NAME}' を作成..."
-  kind create cluster --name "$CLUSTER_NAME" --config kind/cluster.yaml
+  echo "[+] kind cluster '${CLUSTER_NAME}' を作成 (Step 1 用設定: 2718/3017のみ bind)..."
+  kind create cluster --name "$CLUSTER_NAME" --config kind/cluster-step1.yaml
+fi
+
+# Step 1 と Step 4 は同じ NodePort 30317 を使うため、既に Step 4 (nginx-gateway)
+# が apply 済みの状態で Step 1 を実行すると Service 作成が NodePort 競合で失敗する。
+# 早期検知して teardown を促す。bootstrap-step4.sh の対称ガード。
+if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+  conflicting=$({ kubectl --context "$KCTX" -n "$NS" get svc \
+    -o go-template='{{range .items}}{{$name := .metadata.name}}{{range .spec.ports}}{{if eq .nodePort 30317}}{{$name}}{{"\n"}}{{end}}{{end}}{{end}}' \
+    2>/dev/null | grep -v '^marimo$' | grep -v '^$' | head -1; } || true)
+  if [[ -n "$conflicting" ]]; then
+    cat >&2 <<EOF
+ERROR: NodePort 30317 が既に Service '${conflicting}' に割り当てられています。
+   Step 4 (manifests/step4/nginx-deployment.yaml) が同じ NodePort を使うため、
+   Step 4 が適用済みの状態で Step 1 を実行すると競合します。先に teardown してください:
+
+       ./scripts/teardown.sh   # kindクラスタごと削除、その後再実行
+
+   または Step 4 の nginx-gateway Service だけ手動で消す:
+       kubectl --context ${KCTX} -n ${NS} delete \\
+           deploy/nginx-gateway svc/nginx-gateway \\
+           deploy/marimo-nb1    svc/marimo-nb1 \\
+           deploy/marimo-nb2    svc/marimo-nb2
+EOF
+    exit 1
+  fi
 fi
 
 # -------- カスタムイメージ群 --------
@@ -81,30 +130,42 @@ kind load docker-image "$ACP_IMAGE"    --name "$CLUSTER_NAME"
 
 # -------- マニフェスト適用 --------
 echo "[+] Namespace と PVC を適用..."
-kubectl apply -f manifests/namespace.yaml
-kubectl apply -f manifests/pvc.yaml
+kubectl --context "$KCTX" apply -f manifests/namespace.yaml
+kubectl --context "$KCTX" apply -f manifests/step1/pvc.yaml
 
 echo "[+] Claude OAuth トークン Secret を作成/更新..."
-kubectl -n "$NS" create secret generic claude-code-token \
+kubectl --context "$KCTX" -n "$NS" create secret generic claude-code-token \
   --from-literal=token="$CLAUDE_CODE_OAUTH_TOKEN" \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml | kubectl --context "$KCTX" apply -f -
 
 echo "[+] Deployment と Service を適用..."
-kubectl apply -f manifests/deployment.yaml
-kubectl apply -f manifests/service.yaml
+kubectl --context "$KCTX" apply -f manifests/step1/deployment.yaml
+kubectl --context "$KCTX" apply -f manifests/step1/service.yaml
 
 # Secret だけ更新して Deployment マニフェスト自体は変わらないケース(=トークン更新の再実行)
 # でも、走っているPodが自動で新Secretを読み直すことはないため、明示的にrollout restartして
 # 強制的に新Podを起動する。初回作成時も実害なし(annotationが1つ増えるだけ)。
 echo "[+] Pod を新Secretで再生成(rollout restart)..."
-kubectl -n "$NS" rollout restart deployment/marimo
+kubectl --context "$KCTX" -n "$NS" rollout restart deployment/marimo
 
 # -------- 起動待ち --------
 echo "[+] marimo Deployment の rollout を待機..."
-kubectl -n "$NS" rollout status deployment/marimo --timeout=300s
+kubectl --context "$KCTX" -n "$NS" rollout status deployment/marimo --timeout=300s
 
 # -------- アクセス情報 --------
-LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+# IPv6 や docker bridge (172.17.x.x) を避けて IPv4 のLAN IPを優先選択。
+# 環境変数 LAN_IP が指定されていればそれを優先。
+if [[ -z "${LAN_IP:-}" ]]; then
+  LAN_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
+    | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+    | grep -v -E '^(127\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)' \
+    | head -1)"
+fi
+if [[ -z "${LAN_IP:-}" ]]; then
+  LAN_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
+    | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+    | head -1)"
+fi
 cat <<EOF
 
 ====================================================================
@@ -121,17 +182,20 @@ if [[ -n "${LAN_IP}" ]]; then
 
 EOF
 fi
-cat <<'EOF'
+cat <<EOF
  marimo UI を開いたら:
    1. Settings (右上歯車) → Lab → "agents" を有効化
    2. 左サイドバーのエージェントアイコンをクリック
    3. ドロップダウンから "Claude" を選択
    4. ブラウザは ws://<同じホスト>:3017/message に自動接続します
 
- 状態確認:
-   kubectl -n marimo get pods,svc
-   kubectl -n marimo logs deploy/marimo -c marimo
-   kubectl -n marimo logs deploy/marimo -c acp-agent
+ 状態確認(current context が別クラスタの可能性に備えて --context を明示):
+   kubectl --context ${KCTX} -n ${NS} get pods,svc
+   kubectl --context ${KCTX} -n ${NS} logs deploy/marimo -c marimo
+   kubectl --context ${KCTX} -n ${NS} logs deploy/marimo -c acp-agent
+
+ (常に ${KCTX} を使うなら一度だけ default に固定する手もある:
+   kubectl config use-context ${KCTX})
 
  後片付け:
    ./scripts/teardown.sh
