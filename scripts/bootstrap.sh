@@ -75,6 +75,17 @@ EOF
   fi
 fi
 
+# OLLAMA_BASE_URL の入力正規化: 末尾スラッシュ除去 + /v1 サフィックス保証。
+# これにより以下のすべての入力を同等扱いにする:
+#   http://x.x.x.x:11434  / http://x.x.x.x:11434/  / http://x.x.x.x:11434/v1  / http://x.x.x.x:11434/v1/
+# 後段の OLLAMA_API_SHOW_URL 組み立て(${url%/v1}/api/show)で `//api/show` に
+# ならないようにするため必須。
+OLLAMA_BASE_URL="${OLLAMA_BASE_URL%/}"
+case "$OLLAMA_BASE_URL" in
+  */v1) ;;  # 既に /v1 で終わる、何もしない
+  *)    OLLAMA_BASE_URL="${OLLAMA_BASE_URL}/v1" ;;
+esac
+
 CODEX_MODEL="${CODEX_MODEL:-gemma4:31b-cloud}"
 echo "[=] Codex 設定:"
 echo "    OLLAMA_BASE_URL=${OLLAMA_BASE_URL}"

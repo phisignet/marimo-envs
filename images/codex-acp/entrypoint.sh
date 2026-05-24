@@ -52,11 +52,20 @@ mkdir -p "${HOME}/.codex"
 CATALOG_PATH="/etc/codex-catalog/model.json"
 [ -r "$CATALOG_PATH" ] || CATALOG_PATH=""
 
+# 注: heredoc 内のコマンド置換 `$( [ -n "$CATALOG_PATH" ] && echo ... )` は
+# 空のときに非0終了し、`set -e` 環境(特に dash)で heredoc 全体が異常終了する
+# 可能性がある。事前に if/else で文字列変数を作ってから heredoc に埋め込む。
+if [ -n "$CATALOG_PATH" ]; then
+    CATALOG_LINE="model_catalog_json = \"${CATALOG_PATH}\""
+else
+    CATALOG_LINE=""
+fi
+
 cat > "${HOME}/.codex/config.toml" <<EOF
 profile = "ollama-launch"
 model_context_window = ${CODEX_MODEL_CONTEXT_WINDOW:-65536}
 model_max_output_tokens = ${CODEX_MODEL_MAX_OUTPUT_TOKENS:-8192}
-$( [ -n "$CATALOG_PATH" ] && echo "model_catalog_json = \"${CATALOG_PATH}\"" )
+${CATALOG_LINE}
 
 [model_providers.ollama-launch]
 name = "Ollama"
