@@ -13,7 +13,7 @@ marimo の **エージェント機能(Codex CLI + Ollama)** を、Kubernetes (ki
 
 ## Codex+Ollama を選ぶ理由
 
-- **認証情報不要**: Codex CLI の `~/.codex/config.toml` で `requires_openai_auth=false`(implicit)+ Ollama 経由なので API キーなしで動く
+- **認証情報不要**: Codex CLI の `~/.codex/config.toml` で `requires_openai_auth = false` を明示 + Ollama 経由なので API キーなしで動く(OPENAI_API_KEY はダミー値で OK)
 - **社内データが外に出ない**: 推論は社内/家庭内 Ollama のみ。OpenAI 等への通信は一切なし(`/api/show` の応答時間や Ollama ログで検証可能)
 - **Claude サブスクへの依存も外す**: 会社で個人サブスクを使えない/通せない環境向け
 

@@ -53,10 +53,26 @@ done
 # 例: http://192.168.64.32:11434/v1
 if [[ -z "${OLLAMA_BASE_URL:-}" ]]; then
   # 未指定なら hostname -I の LAN IPv4 で自動推測する。
+  # 1段目: 192.168.x.x / 10.x.x.x など「家庭/社内 LAN らしい」レンジ優先で、
+  #        docker bridge 系(172.16-31.x.x)と loopback (127.x.x.x) は除外。
   AUTO_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
     | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
     | grep -v -E '^(127\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)' \
     | head -1)"
+  # 2段目: 1段目で見つからない=社内LANが 172.* 帯の可能性。
+  # 除外を緩めて loopback だけ外して再試行(docker bridge を誤選択する可能性あり、
+  # 警告を出して LAN_IP 明示指定を促す)。
+  if [[ -z "$AUTO_IP" ]]; then
+    AUTO_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
+      | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+      | grep -v -E '^127\.' \
+      | head -1)"
+    if [[ -n "$AUTO_IP" ]]; then
+      echo "  WARN: 192.168.x.x / 10.x.x.x が見つからず、172.x.x.x の AUTO_IP=${AUTO_IP}" >&2
+      echo "        を選択。docker/kind の bridge ネットワークの可能性があります。" >&2
+      echo "        意図と違う場合は LAN_IP env で手動指定してください。" >&2
+    fi
+  fi
   if [[ -n "$AUTO_IP" ]]; then
     OLLAMA_BASE_URL="http://${AUTO_IP}:11434/v1"
     echo "[=] OLLAMA_BASE_URL 未指定 → 自動推測: ${OLLAMA_BASE_URL}"
@@ -154,11 +170,21 @@ OLLAMA_API_SHOW_URL="${OLLAMA_BASE_URL%/v1}/api/show"
 CATALOG_TMP="$(mktemp -d)/model.json"
 trap 'rm -rf "$(dirname "$CATALOG_TMP")"' EXIT
 
+# curl の stderr は捨てない(失敗時の診断: 接続失敗、HTTPステータス、TLS エラー等を見せる)。
+SHOW_JSON="$(dirname "$CATALOG_TMP")/api-show.json"
+SHOW_ERR="$(dirname "$CATALOG_TMP")/api-show.err"
 if ! curl -fsS -X POST "$OLLAMA_API_SHOW_URL" \
     -H 'Content-Type: application/json' \
     -d "{\"name\":\"${CODEX_MODEL}\"}" \
-    > "$(dirname "$CATALOG_TMP")/api-show.json" 2>/dev/null; then
-  echo "ERROR: Ollama /api/show 呼び出し失敗。Ollama が ${OLLAMA_API_SHOW_URL} で到達可能でモデル '${CODEX_MODEL}' が pull 済みであることを確認してください。" >&2
+    -o "$SHOW_JSON" 2>"$SHOW_ERR"; then
+  echo "ERROR: Ollama /api/show 呼び出し失敗。Ollama が ${OLLAMA_API_SHOW_URL} で" >&2
+  echo "       到達可能でモデル '${CODEX_MODEL}' が pull 済みであることを確認してください。" >&2
+  echo "  curl stderr:" >&2
+  sed 's/^/    /' "$SHOW_ERR" >&2
+  if [[ -s "$SHOW_JSON" ]]; then
+    echo "  応答内容(先頭5行):" >&2
+    head -5 "$SHOW_JSON" | sed 's/^/    /' >&2
+  fi
   exit 1
 fi
 

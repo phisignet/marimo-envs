@@ -25,10 +25,11 @@ MODEL="${CODEX_MODEL:-gemma4:31b-cloud}"
 
 mkdir -p "${HOME}/.codex"
 # Ollama 公式の Codex 統合ドキュメント(https://docs.ollama.com/integrations/codex)
-# が推奨する profile ベースの最小設定を使う:
+# が推奨する profile ベースの最小設定をベースに、いくつか明示を加えた構成:
 #   - model_provider 名は "ollama-launch"
 #   - profile 経由で model を選ぶ
-#   - wire_api / requires_openai_auth は明示せずデフォルトに任せる
+#   - wire_api は明示しない(Codex CLI のデフォルト "responses" に任せる)
+#   - requires_openai_auth = false は明示(下記 cat 参照、ダミーキーでの認証バイパスを保証)
 #
 # context_window:
 #   公式注記「Codex requires a larger context window. It is recommended to use a
@@ -61,6 +62,11 @@ else
     CATALOG_LINE=""
 fi
 
+# 注: requires_openai_auth = false を明示することで、Codex CLI 側の
+# sk- プレフィックス検証を完全にバイパス。OPENAI_API_KEY はダミー値("ollama-dummy")
+# でも通る挙動を保証(Ollama は Authorization Bearer header を無視するので
+# 値は何でも良い)。Ollama 公式の最小設定例には明示が無いがデフォルト動作に
+# 暗黙依存するのは脆いので、本構成では明示する。
 cat > "${HOME}/.codex/config.toml" <<EOF
 profile = "ollama-launch"
 model_context_window = ${CODEX_MODEL_CONTEXT_WINDOW:-65536}
@@ -70,6 +76,7 @@ ${CATALOG_LINE}
 [model_providers.ollama-launch]
 name = "Ollama"
 base_url = "${OLLAMA_BASE_URL}"
+requires_openai_auth = false
 
 [profiles.ollama-launch]
 model = "${MODEL}"
