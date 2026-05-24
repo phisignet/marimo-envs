@@ -75,7 +75,7 @@ export CLAUDE_CODE_OAUTH_TOKEN='paste-here'
 > Step 切り替え時はクラスタ削除 → bootstrap の流れに統一するのが安全。
 
 Step 1 との違い:
-- kindクラスタの `extraPortMappings` に **`hostPort: 80`** が必要(`kind/cluster.yaml` で対応済)
+- kindクラスタの `extraPortMappings` に **`hostPort: 80`** が必要(`kind/cluster-step4.yaml` で対応済。Step 1 とは別ファイルなので、Step1 ユーザーが :80 占有環境でも巻き添えで kind create が落ちることはない)
 - `manifests/step4/` 配下を apply:
   - `nginx-configmap.yaml` + `nginx-deployment.yaml`(前段ゲートウェイ)
   - `notebook-nb1.yaml` + `notebook-nb2.yaml`(2テナント分の PVC/Deployment/Service)
@@ -151,7 +151,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
 
 ### LAN の他PC から繋がらない
 - ホスト側 firewall(`ufw` / `firewalld` / `iptables`)で 該当ポート(Step1: 2718/3017, Step4: 80/3017)が許可されているか確認
-- kind は `listenAddress: "0.0.0.0"` 指定済み(`kind/cluster.yaml`)。`ss -tlnp` で `0.0.0.0:<port>` と表示されていればOK、`127.0.0.1:...` なら kind の再作成が必要
+- kind は `listenAddress: "0.0.0.0"` 指定済み(`kind/cluster-step1.yaml` / `kind/cluster-step4.yaml`)。`ss -tlnp` で `0.0.0.0:<port>` と表示されていればOK、`127.0.0.1:...` なら kind の再作成が必要
 
 ### Step 4: `nb1.*.nip.io` が解決されない
 - 公開DNSが落ちていることはまずないので、自分のPCのDNSサーバー指定を確認
@@ -161,7 +161,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
 ### Step 4: ブラウザは `nbN.*.nip.io/` 開けるがエージェントが繋がらない
 - ブラウザの開発者ツール → Network → WS で `ws://nbN.<LAN_IP>.nip.io:3017/message` を見る(本構成は平文HTTP/WSなので `ws://`。TLS化時のみ `wss://`)
 - 404: nginx の :3017 リスナーで Hostヘッダがマッチしていない可能性 → `kubectl -n marimo logs deploy/nginx-gateway` で `404` ログを確認、`server_name` の正規表現が `nbN\..+\.nip\.io` の形にマッチしているか
-- 接続失敗: nginx Pod が落ちているか、ホスト側 :3017 が開いていない → `kubectl -n marimo get pods`, `ss -tlnp | grep -E ':3017$'`
+- 接続失敗: nginx Pod が落ちているか、ホスト側 :3017 が開いていない → `kubectl -n marimo get pods`, `ss -tlnp | grep -E ':3017\b'`
 
 ### Pod が CrashLoopBackOff になる
 ```bash

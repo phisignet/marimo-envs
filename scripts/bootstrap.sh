@@ -67,8 +67,8 @@ fi
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
   echo "[=] kind cluster '${CLUSTER_NAME}' は既に存在します。スキップ。"
 else
-  echo "[+] kind cluster '${CLUSTER_NAME}' を作成..."
-  kind create cluster --name "$CLUSTER_NAME" --config kind/cluster.yaml
+  echo "[+] kind cluster '${CLUSTER_NAME}' を作成 (Step 1 用設定: 2718/3017のみ bind)..."
+  kind create cluster --name "$CLUSTER_NAME" --config kind/cluster-step1.yaml
 fi
 
 # Step 1 と Step 4 は同じ NodePort 30317 を使うため、既に Step 4 (nginx-gateway)

@@ -1,0 +1,30 @@
+# kind クラスタ設定 — Step 1(1人での試用)専用。
+#
+# Step 4 用設定(kind/cluster-step4.yaml)とは別ファイルにしている理由:
+# - Step 4 はホスト :80 を bind する。Step 1 ユーザーが :80 を別用途で
+#   使っている環境で共通設定を使うと kind create がいきなり失敗する。
+# - Step 1 では :80 をそもそも使わないので、開けないことで巻き添えを防ぐ。
+# Step を切り替えるときは teardown.sh で再作成すること(本リポジトリの方針)。
+#
+# 重要(設計の核心): marimoのACPエージェント(Claude Code = ポート3017)は
+# ブラウザが window.location.hostname:3017 にハードコードで直結する仕様
+# (`frontend/src/components/chat/acp/state.ts` の getAgentWebSocketUrl)。
+# そのため marimo の UI (2718) と ACP の 3017 を「同一ホスト名/IPで」LAN に
+# 同時公開する必要がある。
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: marimo
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # marimo UI/サーバWS - ホスト 2718 → ノード(NodePort) 30718
+      - containerPort: 30718
+        hostPort: 2718
+        listenAddress: "0.0.0.0"
+        protocol: TCP
+
+      # ACPエージェント(claude-code-acp) - ホスト 3017 → ノード(NodePort) 30317
+      - containerPort: 30317
+        hostPort: 3017
+        listenAddress: "0.0.0.0"
+        protocol: TCP

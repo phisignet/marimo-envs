@@ -1,5 +1,5 @@
 # marimo と ACP の両方を「同じホスト」で外に出す Service。
-# NodePort で nodePort を明示し、kind 側 extraPortMappings (kind/cluster.yaml) の
+# NodePort で nodePort を明示し、kind 側 extraPortMappings (kind/cluster-step1.yaml) の
 # containerPort: 30718 / 30317 と一致させる。
 #
 # 結果:

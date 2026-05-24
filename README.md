@@ -157,7 +157,8 @@ ACP WS は同じホスト名の `:3017` に自動接続される(nginxがHostヘ
 
 | パス | 役割 |
 |---|---|
-| `kind/cluster.yaml` | kindクラスタ設定。`extraPortMappings` で 80 / 2718 / 3017 を LAN に出す |
+| `kind/cluster-step1.yaml` | Step 1 用 kind 設定。2718/3017 を LAN に bind(:80 は触らない) |
+| `kind/cluster-step4.yaml` | Step 4 用 kind 設定。80/3017 を LAN に bind(:2718 は使わない) |
 | `images/marimo/Dockerfile` | marimo公式イメージ + `marimo[mcp]` extras。`--mcp` 常時ON、`--mcp-allow-remote` は env `MARIMO_ALLOW_REMOTE_MCP=1` opt-in |
 | `images/acp-agent/Dockerfile` | ACPサイドカーイメージ(node + stdio-to-ws + claude-code-acp + Claude Code SDK) |
 | `images/acp-agent/entrypoint.sh` | 起動時にmarimoのMCPサーバーをClaude Codeに自動登録 |

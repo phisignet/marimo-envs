@@ -111,8 +111,8 @@ fi
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
   echo "[=] kind cluster '${CLUSTER_NAME}' は既に存在します。スキップ。"
 else
-  echo "[+] kind cluster '${CLUSTER_NAME}' を作成..."
-  kind create cluster --name "$CLUSTER_NAME" --config kind/cluster.yaml
+  echo "[+] kind cluster '${CLUSTER_NAME}' を作成 (Step 4 用設定: 80/3017 を bind)..."
+  kind create cluster --name "$CLUSTER_NAME" --config kind/cluster-step4.yaml
 fi
 
 # -------- カスタムイメージ --------

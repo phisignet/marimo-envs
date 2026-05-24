@@ -1,0 +1,32 @@
+# kind クラスタ設定 — Step 4(複数人並走 PoC)専用。
+#
+# Step 1 用設定(kind/cluster-step1.yaml)とは別ファイルにしている理由:
+# - Step 4 は nginx 前段で :80 を bind するため、ホスト :80 を別用途で
+#   使っているユーザーが Step1 だけ試したい場合に巻き添えで壊れないよう
+#   Step を切り替え可能にしている。
+# Step を切り替えるときは teardown.sh で再作成すること(本リポジトリの方針)。
+#
+# 重要(設計の核心): marimoのACPエージェント(Claude Code = ポート3017)は
+# ブラウザが window.location.hostname:3017 にハードコードで直結する仕様
+# (`frontend/src/components/chat/acp/state.ts` の getAgentWebSocketUrl)。
+# そのため marimo の UI (Step4 では :80) と ACP の 3017 を「同一ホスト名/IPで」
+# LAN に同時公開する必要がある。Step 4 では nginx 前段が :80 と :3017 の両方を
+# 受けて Host ヘッダで Pod を振り分ける。
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: marimo
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # nginx 前段の HTTP/WS(marimo UI) - ホスト 80 → ノード(NodePort) 30080
+      - containerPort: 30080
+        hostPort: 80
+        listenAddress: "0.0.0.0"
+        protocol: TCP
+
+      # ACPエージェント(claude-code-acp) - ホスト 3017 → ノード(NodePort) 30317
+      # nginx 経由で各テナント Pod に Hostヘッダ振り分け
+      - containerPort: 30317
+        hostPort: 3017
+        listenAddress: "0.0.0.0"
+        protocol: TCP
