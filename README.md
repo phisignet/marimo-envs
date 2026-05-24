@@ -1,30 +1,36 @@
-# marimo + Claude Code on Kubernetes
+# marimo + Codex (Ollama) on Kubernetes
 
-marimo の **エージェント機能(Claude Code)** を、Kubernetes (kind) 上で動かす分析環境。
+marimo の **エージェント機能(Codex CLI + Ollama)** を、Kubernetes (kind) 上で動かす分析環境。
+本ブランチ `feat/codex-ollama` は Step 1 を Claude Code から **Codex CLI + Ollama** に置き換えた構成。
+推論バックエンドが社内ホスト/家庭内 Ollama になるため、**API キー / OpenAI 課金は不要**(社内コンプラ的にも閉じる)。
 
-2 つの構成を用意している:
+> Claude Code 構成(`scripts/bootstrap.sh` がサブスクトークン要求)は main にあり。本ブランチではそれを置き換え。
 
-| Step | 想定 | アクセス | マニフェスト | bootstrap |
+| Step | 想定 | エージェント | アクセス | bootstrap |
 |---|---|---|---|---|
-| **Step 1** | 1人で試用 | `http://<LAN_IP>:2718/` | `manifests/step1/` | `scripts/bootstrap.sh` |
-| **Step 4 (PoC)** | 同一サーバーで複数人並走 | `http://nb1.<LAN_IP>.nip.io/`, `http://nb2.<LAN_IP>.nip.io/` | `manifests/step4/` | `scripts/bootstrap-step4.sh` |
+| **Step 1** | 1人で試用 | **Codex + Ollama**(本ブランチ) | `http://<LAN_IP>:2718/` ※port 3021 で ACP | `scripts/bootstrap.sh` |
+| Step 4 (PoC) | 同一サーバーで複数人並走(Claude構成) | Claude Code | `http://nbN.<LAN_IP>.nip.io/` | `scripts/bootstrap-step4.sh` |
 
-## 構成の選び方
+## Codex+Ollama を選ぶ理由
 
-- **1人で軽く触る** → Step 1。Pod 1個、ポート2718/3017を直接公開
-- **複数人(2人〜)に同時アクセスさせたい** → Step 4。nginx 前段で Hostヘッダ振り分け + nip.io ワイルドカードDNS
-- 一気に最終形(本物のk8s + Ingress + TLS)に飛ぶ予定があるなら、本リポジトリは PoC 用と割り切ってロードマップは [docs/SETUP.md](docs/SETUP.md) を参照
+- **認証情報不要**: Codex CLI の `~/.codex/config.toml` で `requires_openai_auth=false`(implicit)+ Ollama 経由なので API キーなしで動く
+- **社内データが外に出ない**: 推論は社内/家庭内 Ollama のみ。OpenAI 等への通信は一切なし(`/api/show` の応答時間や Ollama ログで検証可能)
+- **Claude サブスクへの依存も外す**: 会社で個人サブスクを使えない/通せない環境向け
 
-## 設計の核心(両 Step 共通)
+## 設計の核心(全構成共通)
 
 marimo のブラウザJSは ACP の WebSocket URL を
-`ws://${window.location.hostname}:3017/message` でハードコードしている
+`ws(s)://${window.location.hostname}:<port>/message` でハードコードしている
 (`frontend/src/components/chat/acp/state.ts` の `getAgentWebSocketUrl`)。
+port は `agentId` 別に固定:
 
-**そのため marimo (HTTP 2718 or 80) と ACP (3017) を「同じホスト名/IP」に揃えて公開しないと繋がらない。** これが本リポジトリ全体の制約。
+- Claude Code = **3017**(main 構成)
+- **Codex = 3021**(本ブランチ構成)
+- Gemini = 3019, OpenCode = 3023, Cursor = 3025
 
-- Step 1: 同一 LAN_IP 上に :2718 と :3017 を NodePort で並べて解決
-- Step 4: nginx が :80 と :3017 の両方を Listen し、Hostヘッダで Pod を振り分け(`nb1.<IP>.nip.io` / `nb2.<IP>.nip.io` のように同じ名前でアクセス)
+そのため marimo (HTTP 2718) と ACP (Codex=3021) を「同じホスト名/IP」に揃えて公開する必要がある。これが本リポジトリの最重要制約。
+
+- Step 1: 同一 LAN_IP 上に :2718 と :3021 を NodePort で並べる(本ブランチで :3017 → :3021 に変更)
 
 ---
 
@@ -65,16 +71,34 @@ marimo のブラウザJSは ACP の WebSocket URL を
 ```
 `kind` と `kubectl` を `~/.local/bin` に導入する(sudo不要)。
 
-### 2. Claude OAuth トークン取得
-ブラウザのある手元の端末で:
-```bash
-claude setup-token
+### 2. Ollama を立てて 0.0.0.0 で listen させる
+
+家のマシン or 社内サーバーで Ollama を起動。Pod から到達可能にするため必ず `OLLAMA_HOST=0.0.0.0:11434` で listen させる。
+docker compose 例:
+
+```yaml
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+volumes:
+  ollama:
 ```
-表示された1年有効のトークンをコピーする。
+
+モデルを pull(本リポジトリのデフォルトは `gemma4:31b-cloud`):
+```bash
+docker exec ollama ollama pull gemma4:31b-cloud
+# Ollama Cloud (-cloud サフィックス)モデルは事前に `ollama signin` でサインインが必要(無料枠あり)
+```
 
 ### 3. デプロイ
 ```bash
-export CLAUDE_CODE_OAUTH_TOKEN='<貼り付け>'
+# OLLAMA_BASE_URL を指定(Pod から到達できる URL=hostのLAN IP)
+export OLLAMA_BASE_URL='http://192.168.x.x:11434/v1'
+# 未指定なら hostname -I から自動推測
 ./scripts/bootstrap.sh
 ```
 完了するとアクセスURLが表示される。
@@ -86,12 +110,30 @@ export CLAUDE_CODE_OAUTH_TOKEN='<貼り付け>'
 marimo UI を開いたら:
 1. **Settings → Lab → "agents" を有効化**(初回のみ。ブラウザ側設定)
 2. 左サイドバーのエージェントアイコン
-3. "Claude" を選択 → そのまま会話開始
+3. **"Codex" を選択**(Claude ではない) → そのまま会話開始
+4. ブラウザは `ws://<同じホスト>:3021/message` に自動接続(Codex用 port)
 
 ### 5. 後片付け
 ```bash
 ./scripts/teardown.sh
 ```
+
+### 警告抑制(model_catalog_json)について
+
+Codex CLI は未知のモデルに対して「**Model metadata for X not found. Defaulting to fallback metadata; this can degrade performance and cause issues.**」警告を出す(Ollama+Codex 既知問題、[ollama/ollama#14752](https://github.com/ollama/ollama/issues/14752))。
+
+Ollama PR #15795 が `ollama launch codex` 経由で `~/.codex/model.json` を生成して Codex に渡す方法を提供しているが、**本構成は Pod 内 codex-acp が host の Ollama に直接接続する形のため、launcher 経由の修正の恩恵を受けられない**。
+
+そのため、本リポジトリでは **同等の model.json を手動組み立てして ConfigMap (`codex-catalog`) で Pod に注入**する形で警告を抑制している:
+
+- `manifests/step1/deployment.yaml` で `codex-catalog` ConfigMap を `/etc/codex-catalog/model.json` に readonly mount
+- `entrypoint.sh` が `~/.codex/config.toml` に `model_catalog_json = "/etc/codex-catalog/model.json"` を書く
+- ConfigMap の中身は Ollama `/api/show` の応答(context_length, capabilities 等)を元に、Codex の `buildCodexModelEntry` ([cmd/launch/codex.go](https://github.com/ollama/ollama/blob/main/cmd/launch/codex.go))と同じフィールド構造で組み立てた JSON
+
+**モデルを変更する場合**(例: gemma → qwen):
+1. `docker exec ollama curl localhost:11434/api/show -d '{"name":"<新モデル>"}'` で context_length と capabilities を確認
+2. `kubectl create configmap codex-catalog --from-file=model.json=<新catalog> --dry-run=client -o yaml | kubectl apply -f -` で更新
+3. `kubectl rollout restart deploy/marimo` で反映
 
 ---
 

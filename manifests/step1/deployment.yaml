@@ -1,7 +1,8 @@
-# 1Podに marimo と ACPサイドカーを同居させる。
+# 1Podに marimo と Codex ACPサイドカーを同居させる。
 #
 # なぜサイドカー構成か:
-# 1. ブラウザは ws://window.location.hostname:3017/message にハードコードで繋ぐ。
+# 1. ブラウザは ws://window.location.hostname:3021/message にハードコードで繋ぐ
+#    (marimo state.ts の Codex 用 port=3021)。
 #    → marimoと同じ外部ホストに ACP も居る必要がある(=同一Service)
 # 2. ACPエージェントはノートブック実体に読み書きする
 #    → marimoと同じファイルシステム(共有PVC、同一パス /workspace)が必要
@@ -69,29 +70,49 @@ spec:
               memory: "2Gi"
 
         # ---------------------------------------------------------------
-        # acp-agent: stdio-to-ws + claude-code-acp + Claude Code SDK。
-        # サブスク認証は CLAUDE_CODE_OAUTH_TOKEN(Secret)経由。
+        # codex-acp: stdio-to-ws + codex-acp + Codex CLI。
+        # 推論バックエンドは Ollama(OpenAI互換 API)で、認証は不要
+        # (config.toml の requires_openai_auth = false でバイパス)。
+        # OLLAMA_BASE_URL を env で渡すと entrypoint.sh が ~/.codex/config.toml を
+        # 動的生成する。
         # ---------------------------------------------------------------
-        - name: acp-agent
-          image: marimo-envs/acp-agent:0.1.0  # ローカルビルド → kind load で配置
+        - name: codex-acp
+          image: marimo-envs/codex-acp:0.1.0  # ローカルビルド → kind load で配置
           imagePullPolicy: IfNotPresent
           workingDir: /workspace
           env:
-            - name: CLAUDE_CODE_OAUTH_TOKEN
+            # bootstrap.sh が env で渡す Ollama エンドポイント。
+            # 例: http://192.168.64.32:11434/v1
+            - name: OLLAMA_BASE_URL
               valueFrom:
-                secretKeyRef:
-                  name: claude-code-token
-                  key: token
-            # Claude Code がアップデートチェックでネットワークに出るのを抑制(任意)。
-            - name: DISABLE_AUTOUPDATER
-              value: "1"
+                configMapKeyRef:
+                  name: codex-config
+                  key: ollama_base_url
+            - name: CODEX_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: codex-config
+                  key: model
+            - name: CODEX_WIRE_API
+              valueFrom:
+                configMapKeyRef:
+                  name: codex-config
+                  key: wire_api
           ports:
             - name: acp
-              containerPort: 3017
+              containerPort: 3021
               protocol: TCP
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+            # Codex の model catalog を ConfigMap から注入(警告抑制用、
+            # Ollama PR #15795 相当の手動組み立て版)。
+            # ~/.codex 配下に subPath マウントすると親ディレクトリが root所有で
+            # 作られて entrypoint が config.toml を書けなくなるため、別パスに
+            # 配置して config.toml の model_catalog_json でパス指定する形にする。
+            - name: codex-catalog
+              mountPath: /etc/codex-catalog
+              readOnly: true
           resources:
             requests:
               cpu: "200m"
@@ -103,3 +124,6 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: marimo-workspace
+        - name: codex-catalog
+          configMap:
+            name: codex-catalog
