@@ -166,13 +166,13 @@ cat <<EOF
       自動接続(nginx が Hostヘッダで該当 Pod に流す)
 
  状態確認(current context が別クラスタの可能性に備えて --context を明示):
-   kubectl --context kind-marimo -n marimo get pods,svc
-   kubectl --context kind-marimo -n marimo logs deploy/nginx-gateway
-   kubectl --context kind-marimo -n marimo logs deploy/marimo-nb1 -c marimo
-   kubectl --context kind-marimo -n marimo logs deploy/marimo-nb2 -c acp-agent
+   kubectl --context ${KCTX} -n ${NS} get pods,svc
+   kubectl --context ${KCTX} -n ${NS} logs deploy/nginx-gateway
+   kubectl --context ${KCTX} -n ${NS} logs deploy/marimo-nb1 -c marimo
+   kubectl --context ${KCTX} -n ${NS} logs deploy/marimo-nb2 -c acp-agent
 
- (常に kind-marimo を使うなら一度だけ default に固定する手もある:
-   kubectl config use-context kind-marimo)
+ (常に ${KCTX} を使うなら一度だけ default に固定する手もある:
+   kubectl config use-context ${KCTX})
 
  後片付け:
    ./scripts/teardown.sh
