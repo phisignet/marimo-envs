@@ -12,6 +12,9 @@ cd "$REPO_ROOT"
 
 CLUSTER_NAME="marimo"
 NS="marimo"
+# 以降の kubectl 呼び出しはすべてこの context を明示する。
+# ユーザーの current context が別クラスタを指していても、誤って apply されることを防ぐ。
+KCTX="kind-${CLUSTER_NAME}"
 
 # Image タグは manifests/step1/ を single source of truth として扱う。
 # bootstrap.sh が build/load するタグと、kubectl apply で動かす Deployment の
@@ -81,27 +84,27 @@ kind load docker-image "$ACP_IMAGE"    --name "$CLUSTER_NAME"
 
 # -------- マニフェスト適用 --------
 echo "[+] Namespace と PVC を適用..."
-kubectl apply -f manifests/namespace.yaml
-kubectl apply -f manifests/step1/pvc.yaml
+kubectl --context "$KCTX" apply -f manifests/namespace.yaml
+kubectl --context "$KCTX" apply -f manifests/step1/pvc.yaml
 
 echo "[+] Claude OAuth トークン Secret を作成/更新..."
-kubectl -n "$NS" create secret generic claude-code-token \
+kubectl --context "$KCTX" -n "$NS" create secret generic claude-code-token \
   --from-literal=token="$CLAUDE_CODE_OAUTH_TOKEN" \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml | kubectl --context "$KCTX" apply -f -
 
 echo "[+] Deployment と Service を適用..."
-kubectl apply -f manifests/step1/deployment.yaml
-kubectl apply -f manifests/step1/service.yaml
+kubectl --context "$KCTX" apply -f manifests/step1/deployment.yaml
+kubectl --context "$KCTX" apply -f manifests/step1/service.yaml
 
 # Secret だけ更新して Deployment マニフェスト自体は変わらないケース(=トークン更新の再実行)
 # でも、走っているPodが自動で新Secretを読み直すことはないため、明示的にrollout restartして
 # 強制的に新Podを起動する。初回作成時も実害なし(annotationが1つ増えるだけ)。
 echo "[+] Pod を新Secretで再生成(rollout restart)..."
-kubectl -n "$NS" rollout restart deployment/marimo
+kubectl --context "$KCTX" -n "$NS" rollout restart deployment/marimo
 
 # -------- 起動待ち --------
 echo "[+] marimo Deployment の rollout を待機..."
-kubectl -n "$NS" rollout status deployment/marimo --timeout=300s
+kubectl --context "$KCTX" -n "$NS" rollout status deployment/marimo --timeout=300s
 
 # -------- アクセス情報 --------
 # IPv6 や docker bridge (172.17.x.x) を避けて IPv4 のLAN IPを優先選択。

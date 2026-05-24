@@ -115,20 +115,27 @@ kubectl -n marimo logs deploy/marimo-nb1 -c marimo
 kubectl -n marimo logs deploy/marimo-nb2 -c acp-agent
 
 # ホスト側ポート(80 と 3017 が両方 LISTEN しているはず)
-ss -tlnp | grep -E ':80 |:3017'
+# ss の Local Address は "0.0.0.0:80" のような形式で続いて空白+次列が来る。
+# `:80 ` のようなパターンだと環境差で取りこぼすので、:80 の後ろが「数字でない」
+# = 数字境界 (\b) で締めるパターンが汎用的。
+ss -tlnp | grep -E ':80\b|:3017\b'
 
-# nip.io 解決確認
-getent hosts "nb1.$(hostname -I | awk '{print $1}').nip.io"
+# nip.io 解決確認(LAN_IP は IPv4 のみ抽出。docker bridge 等を除外)
+LAN_IP=${LAN_IP:-$(hostname -I 2>/dev/null | tr ' ' '\n' \
+  | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+  | grep -v -E '^(127\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)' \
+  | head -1)}
+echo "LAN_IP=${LAN_IP}"
+getent hosts "nb1.${LAN_IP}.nip.io"
 # 期待: <LAN_IP> nb1.<LAN_IP>.nip.io
 
 # nginx 経由の HTTP/WS 振り分け確認(同一マシンから簡易テスト)
-LAN_IP=$(hostname -I | awk '{print $1}')
 curl -sS -o /dev/null -w '%{http_code}\n' "http://nb1.${LAN_IP}.nip.io/"
 curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
 # 期待: 両方とも 200(または marimoのトップへのリダイレクト系)
 ```
 
-ブラウザで `http://nb1.<LAN_IP>.nip.io/` を開く。エージェント有効化後、Networkタブで `ws://nb1.<LAN_IP>.nip.io:3017/message` が確立されることを確認。同じ手順で nb2 も別の独立した環境として開ける。
+ブラウザで `http://nb1.<LAN_IP>.nip.io/` を開く。エージェント有効化後、Networkタブで `ws://nb1.<LAN_IP>.nip.io:3017/message` が確立されることを確認(本構成は平文HTTP/WSなので `ws://`。Step 5 で TLS 導入時は `wss://` に変わる)。同じ手順で nb2 も別の独立した環境として開ける。
 
 ## トラブルシューティング
 
@@ -152,9 +159,9 @@ curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
 - 名前は世界中から見える(IP埋め込み型)が、解決先はLANのプライベートIPなので**外部から到達はできない**
 
 ### Step 4: ブラウザは `nbN.*.nip.io/` 開けるがエージェントが繋がらない
-- ブラウザの開発者ツール → Network → WS で `wss?://nbN.<LAN_IP>.nip.io:3017/message` を見る
+- ブラウザの開発者ツール → Network → WS で `ws://nbN.<LAN_IP>.nip.io:3017/message` を見る(本構成は平文HTTP/WSなので `ws://`。TLS化時のみ `wss://`)
 - 404: nginx の :3017 リスナーで Hostヘッダがマッチしていない可能性 → `kubectl -n marimo logs deploy/nginx-gateway` で `404` ログを確認、`server_name` の正規表現が `nbN\..+\.nip\.io` の形にマッチしているか
-- 接続失敗: nginx Pod が落ちているか、ホスト側 :3017 が開いていない → `kubectl -n marimo get pods`, `ss -tlnp | grep 3017`
+- 接続失敗: nginx Pod が落ちているか、ホスト側 :3017 が開いていない → `kubectl -n marimo get pods`, `ss -tlnp | grep -E ':3017$'`
 
 ### Pod が CrashLoopBackOff になる
 ```bash
