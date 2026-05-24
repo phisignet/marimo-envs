@@ -110,6 +110,27 @@ fi
 # -------- kind クラスタ --------
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
   echo "[=] kind cluster '${CLUSTER_NAME}' は既に存在します。スキップ。"
+  # Step 4 が必要とする extraPortMappings (30080, 30317) が実際に
+  # bind されているか検証。Step 1 用設定で作られたクラスタが残っていると
+  # 30080 が無く nb1/nb2 の URL が到達不能になるため、teardown を促す。
+  node_container="${CLUSTER_NAME}-control-plane"
+  missing=()
+  for p in 30080 30317; do
+    if ! docker port "$node_container" "${p}/tcp" >/dev/null 2>&1; then
+      missing+=("$p")
+    fi
+  done
+  if (( ${#missing[@]} > 0 )); then
+    cat >&2 <<EOF
+ERROR: 既存の kind クラスタ '${CLUSTER_NAME}' に Step 4 が必要なポートマッピングが
+       ありません(欠落: ${missing[*]})。
+       他の Step 用 cluster 設定で作られた可能性があります。teardown して再作成してください:
+
+           ./scripts/teardown.sh         # クラスタ削除
+           ./scripts/bootstrap-step4.sh  # Step 4 用設定で再作成
+EOF
+    exit 1
+  fi
 else
   echo "[+] kind cluster '${CLUSTER_NAME}' を作成 (Step 4 用設定: 80/3017 を bind)..."
   kind create cluster --name "$CLUSTER_NAME" --config kind/cluster-step4.yaml

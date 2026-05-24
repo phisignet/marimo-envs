@@ -164,10 +164,20 @@ curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
 - 接続失敗: nginx Pod が落ちているか、ホスト側 :3017 が開いていない → `kubectl -n marimo get pods`, `ss -tlnp | grep -E ':3017\b'`
 
 ### Pod が CrashLoopBackOff になる
+
+Deployment 名は Step1 なら `marimo`、Step4 なら `marimo-nb1` / `marimo-nb2`。
+
 ```bash
+# Step 1
 kubectl -n marimo describe pod -l app=marimo
-kubectl -n marimo logs -p deploy/<marimo / marimo-nb1 / marimo-nb2> -c <container>
+kubectl -n marimo logs -p deploy/marimo -c marimo
+kubectl -n marimo logs -p deploy/marimo -c acp-agent
+
+# Step 4(nb1の例。nb2 も同様)
+kubectl -n marimo logs -p deploy/marimo-nb1 -c marimo
+kubectl -n marimo logs -p deploy/marimo-nb1 -c acp-agent
 ```
+
 - 共有Volumeの権限が原因なら `securityContext.fsGroup: 1000` が効いているか確認
 - ACPサイドカーで `claude-code-acp` が `CLAUDE_CODE_OAUTH_TOKEN` を読めていない可能性 → Secret の中身を確認
 
@@ -210,17 +220,22 @@ marimo UI のエージェントパネルで、Claude に「現在のMCPツール
   に到達できる相手なら、`get_cell_runtime_data` 等の読み書きツールを叩ける。
 - **`--mcp-allow-remote` は デフォルトOFF**(両 Step 共通の現状設定): DNS rebinding 保護
   (= 許可ホストヘッダ以外を marimo が弾く機能)を無効化するフラグ。
-  - **Step 1** はACPサイドカーが Pod 内 `localhost:2718` で繋ぐので Host=localhost
-    となり保護を素通りできる(=フラグ不要、デフォルトOFFで動く)
-  - **Step 4** は ACPサイドカーは同じく Pod 内 `localhost:3017` 経由で nginx を通らないが、
-    **ブラウザから直接 `http://nbN.<LAN_IP>.nip.io/mcp/server` を叩く動線が新たに増える**。
-    nginx は `proxy_set_header Host $host;` で `Host: nbN.<LAN_IP>.nip.io` を marimo に
-    透過するため、現状の `--mcp-allow-remote` OFF では **ブラウザから直接 MCP を叩く動線
-    だけは DNS rebinding 保護で 421 等になる**(ACPエージェント経由は引き続き動く)。
+  - **MCP は ACPエージェントが Pod 内 `http://localhost:2718/mcp/server` で
+    叩く動線が主**。これは Host=localhost なので nginx を通らず marimo に直接届き、
+    DNS rebinding 保護を素通りする(=`--mcp-allow-remote` フラグ不要)。
+    Step 1 でも Step 4 でも同じ。
+  - **Step 4 で新たに増える動線**は、ブラウザから `http://nbN.<LAN_IP>.nip.io/mcp/server`
+    を直接叩くケース。この経路は **nginx :80 → marimo :2718** を通り、nginx は
+    `proxy_set_header Host $host;` で `Host: nbN.<LAN_IP>.nip.io` を marimo に
+    透過するため、現状の `--mcp-allow-remote` OFF では **ブラウザから直接 MCP を叩く
+    動線だけは DNS rebinding 保護で 421 等になる**(ACPエージェント経由は引き続き動く)。
     ブラウザから直接 MCP エンドポイントを叩く必要がある運用に進むなら、env
     `MARIMO_ALLOW_REMOTE_MCP=1` で opt-in するか、nginx 側で `/mcp/server` への
     proxy_pass だけ `proxy_set_header Host "localhost:2718";` のように書き換える方式
     (より絞った許可)を検討。
+  - 補足: **ACPの WebSocket(:3017)経路は nginx を通る**(ブラウザ → nginx :3017
+    → acp-agent :3017)。が、これは acp-agent 自身が JSON-RPC を喋るだけで marimo の
+    DNS rebinding 保護の対象外なので、Host ヘッダの種類は問題にならない。
 
 **許容する根拠と緩和策:**
 - 用途は信頼ネットワーク(家庭内LAN / 社内LAN / VPN)内のPoC運用に限定
