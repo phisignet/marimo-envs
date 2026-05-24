@@ -32,9 +32,19 @@ echo "    MARIMO_IMAGE=${MARIMO_IMAGE}"
 echo "    ACP_IMAGE   =${ACP_IMAGE}"
 
 # -------- 前提チェック --------
-for tool in docker kind kubectl; do
+for tool in docker kind kubectl curl python3; do
   if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "ERROR: $tool が見つかりません。'scripts/install-tools.sh' を先に実行してください。" >&2
+    case "$tool" in
+      docker|kind|kubectl)
+        echo "ERROR: $tool が見つかりません。'scripts/install-tools.sh' を先に実行してください。" >&2
+        ;;
+      curl)
+        echo "ERROR: curl が見つかりません。codex-catalog 生成時に Ollama /api/show を叩くために必須です。" >&2
+        ;;
+      python3)
+        echo "ERROR: python3 が見つかりません。/api/show の JSON から model.json を組み立てるために必須です。" >&2
+        ;;
+    esac
     exit 1
   fi
 done
@@ -66,11 +76,11 @@ EOF
 fi
 
 CODEX_MODEL="${CODEX_MODEL:-gemma4:31b-cloud}"
-CODEX_WIRE_API="${CODEX_WIRE_API:-responses}"
 echo "[=] Codex 設定:"
 echo "    OLLAMA_BASE_URL=${OLLAMA_BASE_URL}"
 echo "    CODEX_MODEL    =${CODEX_MODEL}"
-echo "    CODEX_WIRE_API =${CODEX_WIRE_API}"
+# 注: wire_api は本構成では明示せず Codex CLI のデフォルト("responses")に任せる
+# (Ollama 公式の Codex 統合形式に準拠)。env での切替機能は不要なため非対応。
 
 # -------- kindクラスタ --------
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then

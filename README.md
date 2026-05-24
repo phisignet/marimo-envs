@@ -113,9 +113,13 @@ export OLLAMA_BASE_URL='http://192.168.x.x:11434/v1'
 - LAN他PC: `http://<このマシンのLAN_IP>:2718/`
 
 marimo UI を開いたら:
-1. 左サイドバーのエージェントアイコンを開く(Lab フラグ `external_agents` は image レベルで事前有効化済、手動操作不要)
-2. **"Codex" を選択**(Claude ではない) → そのまま会話開始
-3. ブラウザは `ws://<同じホスト>:3021/message` に自動接続(Codex 用 port)
+1. **Settings → Lab → "agents"(`external_agents`)を有効化**(初回のみ。ブラウザ側設定)
+2. 左サイドバーのエージェントアイコンを開く
+3. **"Codex" を選択**(Claude ではない) → そのまま会話開始
+4. ブラウザは `ws://<同じホスト>:3021/message` に自動接続(Codex 用 port)
+
+> 補足: 別PR(`feat/enable-agents-by-default`)が main にマージされると、この
+> Lab 有効化の手動操作は不要になる(image レベルで初期有効化される)。
 
 ### 5. 後片付け
 ```bash
