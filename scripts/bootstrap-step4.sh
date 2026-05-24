@@ -13,6 +13,9 @@ cd "$REPO_ROOT"
 
 CLUSTER_NAME="marimo"
 NS="marimo"
+# 以降の kubectl 呼び出しはすべてこの context を明示する。
+# ユーザーの current context が別クラスタを指していても、誤って apply されることを防ぐ。
+KCTX="kind-${CLUSTER_NAME}"
 
 # image タグは step4 マニフェストを single source of truth に。
 extract_image() {
@@ -80,21 +83,28 @@ fi
 # NodePort 30317 は Step 1 の Service も同名で使用するため、既に Step 1 が
 # 適用済みのクラスタで step4 を走らせると nginx-gateway Service 作成が
 # NodePort 競合で失敗する。早期検知して teardown を促す。
-if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$" \
-   && kubectl --context "kind-${CLUSTER_NAME}" -n "$NS" get svc 2>/dev/null \
-        | awk '{print $5}' | grep -qE '(^|,)30317:' \
-   && ! kubectl --context "kind-${CLUSTER_NAME}" -n "$NS" get svc nginx-gateway >/dev/null 2>&1; then
-  cat >&2 <<EOF
-ERROR: NodePort 30317 が既に他の Service に割り当てられています。
+#
+# 検出方法: go-template で全 Service の .spec.ports[].nodePort を走査し、
+# 30317 を持つ Service 名のうち nginx-gateway 以外があれば競合とみなす。
+# jsonpath の `[?(@...==N)]` フィルタは ports 配列内の各要素マッチが
+# kubectl 実装で正しく効かないケースがあるため、go-template に統一して堅牢化。
+if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+  conflicting=$({ kubectl --context "$KCTX" -n "$NS" get svc \
+    -o go-template='{{range .items}}{{$name := .metadata.name}}{{range .spec.ports}}{{if eq .nodePort 30317}}{{$name}}{{"\n"}}{{end}}{{end}}{{end}}' \
+    2>/dev/null | grep -v '^nginx-gateway$' | grep -v '^$' | head -1; } || true)
+  if [[ -n "$conflicting" ]]; then
+    cat >&2 <<EOF
+ERROR: NodePort 30317 が既に Service '${conflicting}' に割り当てられています。
    Step 1 (manifests/step1/service.yaml) が同じ NodePort を使うため、Step 1 が
    適用済みの状態で Step 4 を実行すると競合します。先に teardown してください:
 
        ./scripts/teardown.sh   # kindクラスタごと削除、その後再実行
 
    または Step 1 の Service だけ手動で消す:
-       kubectl -n marimo delete deploy/marimo svc/marimo
+       kubectl --context ${KCTX} -n ${NS} delete deploy/marimo svc/marimo
 EOF
-  exit 1
+    exit 1
+  fi
 fi
 
 # -------- kind クラスタ --------
@@ -117,27 +127,28 @@ kind load docker-image "$ACP_IMAGE"    --name "$CLUSTER_NAME"
 
 # -------- マニフェスト適用 --------
 echo "[+] Namespace と Secret..."
-kubectl apply -f manifests/namespace.yaml
-kubectl -n "$NS" create secret generic claude-code-token \
+kubectl --context "$KCTX" apply -f manifests/namespace.yaml
+kubectl --context "$KCTX" -n "$NS" create secret generic claude-code-token \
   --from-literal=token="$CLAUDE_CODE_OAUTH_TOKEN" \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml | kubectl --context "$KCTX" apply -f -
 
 echo "[+] nginx (ConfigMap + Deployment + Service)..."
-kubectl apply -f manifests/step4/nginx-configmap.yaml
-kubectl apply -f manifests/step4/nginx-deployment.yaml
+kubectl --context "$KCTX" apply -f manifests/step4/nginx-configmap.yaml
+kubectl --context "$KCTX" apply -f manifests/step4/nginx-deployment.yaml
 
 echo "[+] notebook 環境 nb1 / nb2..."
-kubectl apply -f manifests/step4/notebook-nb1.yaml
-kubectl apply -f manifests/step4/notebook-nb2.yaml
+kubectl --context "$KCTX" apply -f manifests/step4/notebook-nb1.yaml
+kubectl --context "$KCTX" apply -f manifests/step4/notebook-nb2.yaml
 
 # Secret更新時もPodに反映されるよう常にrestart
 echo "[+] 全 Deployment を rollout restart (新Secretを確実に読ませる)..."
-kubectl -n "$NS" rollout restart deploy/nginx-gateway deploy/marimo-nb1 deploy/marimo-nb2
+kubectl --context "$KCTX" -n "$NS" rollout restart \
+  deploy/nginx-gateway deploy/marimo-nb1 deploy/marimo-nb2
 
 echo "[+] 起動待ち(各 Deployment ≤300s)..."
-kubectl -n "$NS" rollout status deploy/nginx-gateway --timeout=120s
-kubectl -n "$NS" rollout status deploy/marimo-nb1    --timeout=300s
-kubectl -n "$NS" rollout status deploy/marimo-nb2    --timeout=300s
+kubectl --context "$KCTX" -n "$NS" rollout status deploy/nginx-gateway --timeout=120s
+kubectl --context "$KCTX" -n "$NS" rollout status deploy/marimo-nb1    --timeout=300s
+kubectl --context "$KCTX" -n "$NS" rollout status deploy/marimo-nb2    --timeout=300s
 
 cat <<EOF
 
