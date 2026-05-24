@@ -82,6 +82,11 @@ Step 1 との違い:
 - Secret `claude-code-token` は両テナントで共有
 - 完了後の出力に `http://nb1.<LAN_IP>.nip.io/` と `http://nb2.<LAN_IP>.nip.io/` が案内される
 
+> 以降の `kubectl` コマンドは、current context が `kind-marimo`(本リポジトリの
+> bootstrap が作るクラスタ)を指している前提で書いている。別クラスタを操作している
+> 可能性があるなら、各コマンドに `--context kind-marimo` を付けるか、一度だけ
+> `kubectl config use-context kind-marimo` を実行して固定すること。
+
 ### 4-A. 動作確認(Step 1)
 
 ```bash
@@ -160,8 +165,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
 
 ### Step 4: ブラウザは `nbN.*.nip.io/` 開けるがエージェントが繋がらない
 - ブラウザの開発者ツール → Network → WS で `ws://nbN.<LAN_IP>.nip.io:3017/message` を見る(本構成は平文HTTP/WSなので `ws://`。TLS化時のみ `wss://`)
-- 404: nginx の :3017 リスナーで Hostヘッダがマッチしていない可能性 → `kubectl -n marimo logs deploy/nginx-gateway` で `404` ログを確認、`server_name` の正規表現が `nbN\..+\.nip\.io` の形にマッチしているか
-- 接続失敗: nginx Pod が落ちているか、ホスト側 :3017 が開いていない → `kubectl -n marimo get pods`, `ss -tlnp | grep -E ':3017\b'`
+- 404: nginx の :3017 リスナーで Hostヘッダがマッチしていない可能性 → `kubectl --context kind-marimo -n marimo logs deploy/nginx-gateway` で `404` ログを確認、`server_name` の正規表現が `nbN\..+\.nip\.io` の形にマッチしているか
+- 接続失敗: nginx Pod が落ちているか、ホスト側 :3017 が開いていない → `kubectl --context kind-marimo -n marimo get pods`, `ss -tlnp | grep -E ':3017\b'`
 
 ### Pod が CrashLoopBackOff になる
 

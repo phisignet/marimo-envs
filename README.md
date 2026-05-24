@@ -194,12 +194,12 @@ ACPで接続したClaude Codeは、以下を使ってノートブックを操作
 - プロンプト: `active_notebooks`, `errors_summary`
 
 > marimoのMCPサーバーは `http://localhost:2718/mcp/server`(HTTP)で公開され、同Pod内のACPサイドカーが起動時に `claude mcp add` で自動登録する。クライアント側は何も触らなくてよい。
-> 公式ドキュメント(`docs/guides/editor_features/mcp.md`)に載っていないツールも含まれているので、最新の一覧はPod内で `claude mcp list` を叩くか、marimo UI のエージェントパネルで Claude に直接聞くのが確実。Deployment名は Step1なら `marimo`、Step4なら `marimo-nb1` / `marimo-nb2`:
+> 公式ドキュメント(`docs/guides/editor_features/mcp.md`)に載っていないツールも含まれているので、最新の一覧はPod内で `claude mcp list` を叩くか、marimo UI のエージェントパネルで Claude に直接聞くのが確実。Deployment名は Step1なら `marimo`、Step4なら `marimo-nb1` / `marimo-nb2`(`--context` を明示することで current context が別クラスタを指していても安全):
 > ```bash
 > # Step 1
-> kubectl -n marimo exec deploy/marimo     -c acp-agent -- claude mcp list
+> kubectl --context kind-marimo -n marimo exec deploy/marimo     -c acp-agent -- claude mcp list
 > # Step 4
-> kubectl -n marimo exec deploy/marimo-nb1 -c acp-agent -- claude mcp list
+> kubectl --context kind-marimo -n marimo exec deploy/marimo-nb1 -c acp-agent -- claude mcp list
 > ```
 
 ## 意図的に妥協している点(両 Step 共通)

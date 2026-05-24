@@ -75,9 +75,14 @@ echo "[=] LAN_IP=${LAN_IP}"
 # Port 80 は通常 root 必要だが、kind が docker 経由でバインドするため
 # docker daemon が root 権限を持っていれば一般ユーザーで OK。
 # 失敗時は ss -tlnp で既存LISTENを確認。
-echo "[+] ホスト側 80 ポートが空いているか念のため確認..."
-if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:)80$'; then
-  echo "  WARN: 既に :80 が LISTEN 中の可能性があります。bootstrap が失敗したら確認を。" >&2
+# ss が無い環境(ミニマルなコンテナ等)では確認自体をスキップする(ノイズ抑制)。
+if command -v ss >/dev/null 2>&1; then
+  echo "[+] ホスト側 80 ポートが空いているか念のため確認..."
+  if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:)80$'; then
+    echo "  WARN: 既に :80 が LISTEN 中の可能性があります。bootstrap が失敗したら確認を。" >&2
+  fi
+else
+  echo "[=] ss コマンドが見つからないので :80 LISTEN チェックはスキップ。"
 fi
 
 # NodePort 30317 は Step 1 の Service も同名で使用するため、既に Step 1 が
