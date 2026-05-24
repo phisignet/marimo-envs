@@ -171,7 +171,7 @@ echo "[+] 全 Deployment を rollout restart (新Secretを確実に読ませる)
 kubectl --context "$KCTX" -n "$NS" rollout restart \
   deploy/nginx-gateway deploy/marimo-nb1 deploy/marimo-nb2
 
-echo "[+] 起動待ち(各 Deployment ≤300s)..."
+echo "[+] 起動待ち(nginx ≤120s / marimo-nbN ≤300s)..."
 kubectl --context "$KCTX" -n "$NS" rollout status deploy/nginx-gateway --timeout=120s
 kubectl --context "$KCTX" -n "$NS" rollout status deploy/marimo-nb1    --timeout=300s
 kubectl --context "$KCTX" -n "$NS" rollout status deploy/marimo-nb2    --timeout=300s
