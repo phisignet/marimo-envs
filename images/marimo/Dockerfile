@@ -27,6 +27,17 @@ ARG MARIMO_VERSION
 # --mcp の hidden 仕様変更を踏むリスクがある。
 RUN pip install --no-cache-dir "marimo[mcp]==${MARIMO_VERSION}"
 
+# 初期 marimo user config を焼き込み:
+#   [experimental] external_agents = true
+# ブラウザの Settings → Lab で毎回手動で有効化する手間を省く。
+# パスは marimo 0.23.8 の `marimo config show` で実機確認した
+# /home/appuser/.config/marimo/marimo.toml(=$HOME/.config/marimo/marimo.toml)。
+# ファイル所有を appuser にして、ランタイムでの追加設定変更(他フラグ等)も
+# marimo が同じファイルに書き戻せるようにする(read-write のままにする)。
+RUN mkdir -p /home/appuser/.config/marimo \
+ && printf '[experimental]\nexternal_agents = true\n' \
+        > /home/appuser/.config/marimo/marimo.toml
+
 # 公式CMDは:
 #   sh -c "exec marimo edit --no-token -p $PORT --host $HOST"
 #
