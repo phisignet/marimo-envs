@@ -74,7 +74,6 @@ port は `agentId` 別に固定:
 ./scripts/install-tools.sh
 ```
 `kind` と `kubectl` を `~/.local/bin` に導入する(sudo 不要)。`curl` と `python3` は OS パッケージ等で別途揃えること。
-`kind` と `kubectl` を `~/.local/bin` に導入する(sudo不要)。
 
 ### 2. Ollama を立てて 0.0.0.0 で listen させる
 
