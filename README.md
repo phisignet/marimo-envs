@@ -67,11 +67,13 @@ port は `agentId` 別に固定:
 - Ollama 起動済み(`OLLAMA_HOST=0.0.0.0:11434` で listen、Pod から到達可能)
 - LANで到達したいなら `hostname -I` で取れる IP を確認
 - **Claude サブスクや OpenAI API キーは不要**(Ollama 経由のため)
+- `curl` と `python3` がホストにインストール済み(`bootstrap.sh` が Ollama `/api/show` から codex-catalog の `model.json` を組み立てるのに使う。ほとんどの Linux ディストリには標準で入っているが、軽量コンテナ等にはない場合あり)
 
 ### 1. ツール導入(初回のみ)
 ```bash
 ./scripts/install-tools.sh
 ```
+`kind` と `kubectl` を `~/.local/bin` に導入する(sudo 不要)。`curl` と `python3` は OS パッケージ等で別途揃えること。
 `kind` と `kubectl` を `~/.local/bin` に導入する(sudo不要)。
 
 ### 2. Ollama を立てて 0.0.0.0 で listen させる
