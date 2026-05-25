@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Step 1(1人での試用)用のワンショットbootstrap。
-# 推論バックエンドは Ollama(本ブランチ feat/codex-ollama)。
+# Step 1(1人での試用)用のワンショットbootstrap(Codex+Ollama 構成)。
+# 推論バックエンドは Ollama(OpenAI互換 API)、エージェントは Codex CLI。
 # - kindクラスタを起動(なければ)
 # - marimo拡張イメージと codex-acp イメージをビルドして kind に load
 # - ConfigMap(Ollama接続情報)を apply
@@ -70,7 +70,8 @@ if [[ -z "${OLLAMA_BASE_URL:-}" ]]; then
     if [[ -n "$AUTO_IP" ]]; then
       echo "  WARN: 192.168.x.x / 10.x.x.x が見つからず、172.x.x.x の AUTO_IP=${AUTO_IP}" >&2
       echo "        を選択。docker/kind の bridge ネットワークの可能性があります。" >&2
-      echo "        意図と違う場合は LAN_IP env で手動指定してください。" >&2
+      echo "        意図と違う場合は OLLAMA_BASE_URL を手動指定してください:" >&2
+      echo "          export OLLAMA_BASE_URL='http://<実際のLAN_IP>:11434/v1'" >&2
     fi
   fi
   if [[ -n "$AUTO_IP" ]]; then
@@ -173,9 +174,15 @@ trap 'rm -rf "$(dirname "$CATALOG_TMP")"' EXIT
 # curl の stderr は捨てない(失敗時の診断: 接続失敗、HTTPステータス、TLS エラー等を見せる)。
 SHOW_JSON="$(dirname "$CATALOG_TMP")/api-show.json"
 SHOW_ERR="$(dirname "$CATALOG_TMP")/api-show.err"
+
+# JSON ペイロードは Python の json.dumps で安全にエスケープして組み立てる。
+# CODEX_MODEL に " や \ や改行が含まれていても curl -d が壊れない。
+SHOW_PAYLOAD=$(CODEX_MODEL="$CODEX_MODEL" python3 -c \
+  'import json, os; print(json.dumps({"name": os.environ["CODEX_MODEL"]}))')
+
 if ! curl -fsS -X POST "$OLLAMA_API_SHOW_URL" \
     -H 'Content-Type: application/json' \
-    -d "{\"name\":\"${CODEX_MODEL}\"}" \
+    -d "$SHOW_PAYLOAD" \
     -o "$SHOW_JSON" 2>"$SHOW_ERR"; then
   echo "ERROR: Ollama /api/show 呼び出し失敗。Ollama が ${OLLAMA_API_SHOW_URL} で" >&2
   echo "       到達可能でモデル '${CODEX_MODEL}' が pull 済みであることを確認してください。" >&2
@@ -193,11 +200,16 @@ fi
 #   - model_info.<family>.context_length(モデルのコンテキスト窓)
 #   - capabilities(vision あれば input_modalities に image 追加)
 # -cloud サフィックス付きモデルは truncation mode を tokens に。
-python3 <<PYEOF > "$CATALOG_TMP"
-import json
-with open("$(dirname "$CATALOG_TMP")/api-show.json") as f:
+#
+# heredoc は <<'PYEOF' とクォートして Python ソースのシェル展開を抑止。
+# 引数(モデル名、show応答パス)は env 経由で渡す(" や \ が含まれていても安全)。
+SHOW_JSON_PATH="$SHOW_JSON" \
+CODEX_MODEL="$CODEX_MODEL" \
+python3 <<'PYEOF' > "$CATALOG_TMP"
+import json, os
+with open(os.environ["SHOW_JSON_PATH"]) as f:
     show = json.load(f)
-model_name = "${CODEX_MODEL}"
+model_name = os.environ["CODEX_MODEL"]
 # context_length は model_info.<family>.context_length に入る(family は様々)
 ctx_len = 128_000  # fallback
 for k, v in (show.get("model_info") or {}).items():

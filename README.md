@@ -4,11 +4,11 @@ marimo の **エージェント機能(Codex CLI + Ollama)** を、Kubernetes (ki
 本ブランチ `feat/codex-ollama` は Step 1 を Claude Code から **Codex CLI + Ollama** に置き換えた構成。
 推論バックエンドが社内ホスト/家庭内 Ollama になるため、**API キー / OpenAI 課金は不要**(社内コンプラ的にも閉じる)。
 
-> Claude Code 構成(`scripts/bootstrap.sh` がサブスクトークン要求)は main にあり。本ブランチではそれを置き換え。
+> 元の Claude Code 構成(`scripts/bootstrap.sh` がサブスクトークン要求)は別変更系統(main 由来)にあり。本変更はそれを置き換える「Codex+Ollama 構成」。
 
 | Step | 想定 | エージェント | アクセス | bootstrap |
 |---|---|---|---|---|
-| **Step 1** | 1人で試用 | **Codex + Ollama**(本ブランチ) | `http://<LAN_IP>:2718/` ※port 3021 で ACP | `scripts/bootstrap.sh` |
+| **Step 1** | 1人で試用 | **Codex + Ollama** | `http://<LAN_IP>:2718/` ※port 3021 で ACP | `scripts/bootstrap.sh` |
 | Step 4 (PoC) | 同一サーバーで複数人並走(Claude構成) | Claude Code | `http://nbN.<LAN_IP>.nip.io/` | `scripts/bootstrap-step4.sh` |
 
 ## Codex+Ollama を選ぶ理由
@@ -85,6 +85,7 @@ docker compose 例:
 services:
   ollama:
     image: ollama/ollama:latest
+    container_name: ollama  # 下記 `docker exec ollama ...` の手順をそのまま使うため
     ports:
       - "11434:11434"
     volumes:
@@ -97,6 +98,9 @@ volumes:
 ```bash
 docker exec ollama ollama pull gemma4:31b-cloud
 # Ollama Cloud (-cloud サフィックス)モデルは事前に `ollama signin` でサインインが必要(無料枠あり)
+
+# container_name を明示していない場合は compose 経由で:
+#   docker compose exec ollama ollama pull gemma4:31b-cloud
 ```
 
 ### 3. デプロイ
@@ -139,9 +143,9 @@ Ollama PR #15795 が `ollama launch codex` 経由で `~/.codex/model.json` を�
 - ConfigMap の中身は Ollama `/api/show` の応答(context_length, capabilities 等)を元に、Codex の `buildCodexModelEntry` ([cmd/launch/codex.go](https://github.com/ollama/ollama/blob/main/cmd/launch/codex.go))と同じフィールド構造で組み立てた JSON
 
 **モデルを変更する場合**(例: gemma → qwen):
-1. `docker exec ollama curl localhost:11434/api/show -d '{"name":"<新モデル>"}'` で context_length と capabilities を確認
-2. `kubectl create configmap codex-catalog --from-file=model.json=<新catalog> --dry-run=client -o yaml | kubectl apply -f -` で更新
-3. `kubectl rollout restart deploy/marimo` で反映
+1. `CODEX_MODEL='<新モデル>' ./scripts/bootstrap.sh` で再実行(bootstrap.sh 内で `/api/show` から動的取得 → codex-catalog ConfigMap 更新 → Pod rollout まで自動)
+   - 手動でやる場合は: `docker exec ollama curl localhost:11434/api/show -d '{"name":"<新モデル>"}'` で context_length と capabilities を確認
+   - `container_name: ollama` を compose で明示していない場合は `docker compose exec ollama ...`
 
 ---
 
