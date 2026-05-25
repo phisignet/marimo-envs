@@ -1,15 +1,12 @@
 # marimo + Codex (Ollama) on Kubernetes
 
 marimo の **エージェント機能(Codex CLI + Ollama)** を、Kubernetes (kind) 上で動かす分析環境。
-本ブランチ `feat/codex-ollama` は Step 1 を Claude Code から **Codex CLI + Ollama** に置き換えた構成。
-推論バックエンドが社内ホスト/家庭内 Ollama になるため、**API キー / OpenAI 課金は不要**(社内コンプラ的にも閉じる)。
+Step 1 のエージェントは **Codex CLI + Ollama** で構成され、推論バックエンドが社内ホスト/家庭内 Ollama になるため、**API キー / OpenAI 課金は不要**(社内コンプラ的にも閉じる)。
 
-> 元の Claude Code 構成(`scripts/bootstrap.sh` がサブスクトークン要求)は別変更系統(main 由来)にあり。本変更はそれを置き換える「Codex+Ollama 構成」。
-
-| Step | 想定 | エージェント | アクセス | bootstrap |
-|---|---|---|---|---|
-| **Step 1** | 1人で試用 | **Codex + Ollama** | `http://<LAN_IP>:2718/` ※port 3021 で ACP | `scripts/bootstrap.sh` |
-| Step 4 (PoC) | 同一サーバーで複数人並走(Claude構成) | Claude Code | `http://nbN.<LAN_IP>.nip.io/` | `scripts/bootstrap-step4.sh` |
+| Step | 想定 | エージェント | 認証情報 | アクセス | bootstrap |
+|---|---|---|---|---|---|
+| **Step 1** | 1人で試用 | **Codex + Ollama** | 不要(Ollama経由) | `http://<LAN_IP>:2718/` ※port 3021 で ACP | `scripts/bootstrap.sh` |
+| Step 4 (PoC) | 同一サーバーで複数人並走 | Claude Code | **Claude OAuthトークン必須**(`claude setup-token`) | `http://nbN.<LAN_IP>.nip.io/` | `scripts/bootstrap-step4.sh` |
 
 ## Codex+Ollama を選ぶ理由
 
@@ -24,13 +21,14 @@ marimo のブラウザJSは ACP の WebSocket URL を
 (`frontend/src/components/chat/acp/state.ts` の `getAgentWebSocketUrl`)。
 port は `agentId` 別に固定:
 
-- Claude Code = **3017**(main 構成)
-- **Codex = 3021**(本ブランチ構成)
+- **Codex = 3021**(Step 1 構成)
+- Claude Code = 3017(Step 4 PoC 構成)
 - Gemini = 3019, OpenCode = 3023, Cursor = 3025
 
-そのため marimo (HTTP 2718) と ACP (Codex=3021) を「同じホスト名/IP」に揃えて公開する必要がある。これが本リポジトリの最重要制約。
+そのため marimo (HTTP 2718) と ACP (Step 1 では Codex=3021)を「同じホスト名/IP」に揃えて公開する必要がある。これが本リポジトリの最重要制約。
 
-- Step 1: 同一 LAN_IP 上に :2718 と :3021 を NodePort で並べる(本ブランチで :3017 → :3021 に変更)
+- Step 1 (Codex): 同一 LAN_IP 上に :2718 と :3021 を NodePort で並べる
+- Step 4 (Claude PoC): nginx 前段で 80/3017 を同一ホストに振り分け(別途 docs/SETUP.md 参照)
 
 ---
 
@@ -211,15 +209,15 @@ ACP WS は同じホスト名の `:3017` に自動接続される(nginxがHostヘ
 
 | パス | 役割 |
 |---|---|
-| `kind/cluster-step1.yaml` | Step 1 用 kind 設定。本ブランチでは 2718/**3021** を LAN に bind(:80 は触らない、Codex は port 3021) |
+| `kind/cluster-step1.yaml` | Step 1 用 kind 設定。2718/3021 を LAN に bind(:80 は触らない、Codex は port 3021) |
 | `kind/cluster-step4.yaml` | Step 4 用 kind 設定。80/3017 を LAN に bind(:2718 は使わない、Claude 構成) |
 | `images/marimo/Dockerfile` | marimo公式イメージ + `marimo[mcp]` extras。`--mcp` 常時ON、`--mcp-allow-remote` は env `MARIMO_ALLOW_REMOTE_MCP=1` opt-in |
-| **`images/codex-acp/Dockerfile`** | **本ブランチ追加**: Codex 用 ACPサイドカー(node + stdio-to-ws + @openai/codex@0.133.0 + @zed-industries/codex-acp@0.15.0) |
-| **`images/codex-acp/entrypoint.sh`** | **本ブランチ追加**: 起動時に `~/.codex/config.toml` を env から動的生成 |
-| `images/acp-agent/Dockerfile` | Claude Code 用 ACPサイドカー(main 構成)。本ブランチでは未使用 |
+| `images/codex-acp/Dockerfile` | Step 1 用 ACPサイドカー(Codex+Ollama)。node + stdio-to-ws + @openai/codex@0.133.0 + @zed-industries/codex-acp@0.15.0 |
+| `images/codex-acp/entrypoint.sh` | Step 1 用エントリポイント。起動時に `~/.codex/config.toml` を env から動的生成 |
+| `images/acp-agent/Dockerfile` | Step 4 用 ACPサイドカー(Claude Code)。Step 1 では未使用 |
 | `manifests/namespace.yaml` | 専用 namespace `marimo`(Step1/4共通) |
-| `manifests/secret.example.yaml` | Secret形式参考(本ブランチでは Secret 使わず ConfigMap 化、Step4 用に残置) |
-| **`manifests/step1/{pvc,deployment,service}.yaml`** | **本ブランチで Codex 化済**: 単一Pod + NodePort(2718/3021)、codex-acp + 2 ConfigMap(codex-config / codex-catalog) |
+| `manifests/secret.example.yaml` | Secret形式参考(Step 4 用、Claude OAuthトークン格納先) |
+| `manifests/step1/{pvc,deployment,service}.yaml` | Step 1: 単一Pod + NodePort(2718/3021)、codex-acp + 2 ConfigMap(codex-config / codex-catalog) |
 | `manifests/step4/notebook-nb{1,2}.yaml` | Step 4: テナント別 PVC+Deployment+Service(ClusterIP) |
 | `manifests/step4/nginx-{configmap,deployment}.yaml` | Step 4: 前段 nginx と Hostヘッダ振り分け設定 |
 | `scripts/bootstrap.sh` | Step 1 用 |

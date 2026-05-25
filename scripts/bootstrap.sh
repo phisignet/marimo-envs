@@ -61,7 +61,7 @@ if [[ -z "${OLLAMA_BASE_URL:-}" ]]; then
     | head -1)"
   # 2段目: 1段目で見つからない=社内LANが 172.* 帯の可能性。
   # 除外を緩めて loopback だけ外して再試行(docker bridge を誤選択する可能性あり、
-  # 警告を出して LAN_IP 明示指定を促す)。
+  # 警告を出して OLLAMA_BASE_URL の明示指定を促す)。
   if [[ -z "$AUTO_IP" ]]; then
     AUTO_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
       | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
