@@ -145,7 +145,7 @@ fi
 # `kubectl apply` が「port is already allocated」で落ちる。kubectl のエラーは
 # どの Service が握っているか分かりにくいので、early に check して
 # teardown を促す。
-#   Step 1: Service marimo が nodePort を直接握る(agent別 ACP port のみ)
+#   Step 1: Service marimo が nodePort を直接握る(marimo UI 30718 + agent別 ACP port)
 #   Step 4: nginx-gateway が複数 nodePort を集約(http 30080 + agent別 ACP port)
 acp_node_port=$([[ "$AGENT" == "claude" ]] && echo 30317 || echo 30321)
 case "$STEP" in

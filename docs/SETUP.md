@@ -254,7 +254,7 @@ marimo UI のエージェントパネルで、Claude に「現在のMCPツール
 
 | Step | 内容 | 状態 |
 |---|---|---|
-| 1 | 1人での試用(3017直接公開) | ✅ 完了。`scripts/bootstrap.sh --step 1 --agent <claude\|codex>` で再現 |
+| 1 | 1人での試用(ACP直接公開: claude=3017 / codex=3021) | ✅ 完了。`scripts/bootstrap.sh --step 1 --agent <claude\|codex>` で再現 |
 | 2 | 社内ネットワークでのワイルドカードDNS手配 | (家庭環境では nip.io で代替済み。会社では情シスに相談予定) |
 | 3 | 上司含む2–3人デモ | 未着手 |
 | 4 | 複数ユーザー並列 + nginx Host振り分け(PoC) | ✅ 完了。`scripts/bootstrap.sh --step 4 --agent <claude\|codex>` で再現。`nb1` / `nb2` の2テナントで動作確認済み |
