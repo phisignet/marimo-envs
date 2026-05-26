@@ -1,0 +1,41 @@
+# Step 1 / claude overlay: marimo Deployment に acp-agent (Claude Code) サイドカーを追加。
+#
+# 認証は Claude Pro/Max サブスクの OAuth トークン:
+#   1. 手元で `claude setup-token` 実行 → 1年有効のトークンを取得
+#   2. bootstrap.sh が CLAUDE_CODE_OAUTH_TOKEN env を Secret claude-code-token に格納
+#   3. このサイドカーが env として読む
+# entrypoint.sh が起動時に Claude Code 側へ marimo MCP サーバーを `claude mcp add` で登録する。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marimo
+spec:
+  template:
+    spec:
+      containers:
+        - name: acp-agent
+          image: marimo-envs/acp-agent:0.1.0  # bootstrap.sh がビルド → kind load
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: claude-code-token
+                  key: token
+            # Claude Code の自動アップデートチェックを抑制(任意)。
+            - name: DISABLE_AUTOUPDATER
+              value: "1"
+          ports:
+            - name: acp
+              containerPort: 3017
+              protocol: TCP
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              memory: "2Gi"

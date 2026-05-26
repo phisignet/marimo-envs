@@ -1,310 +1,308 @@
 #!/usr/bin/env bash
-# Step 1(1人での試用)用のワンショットbootstrap(Codex+Ollama 構成)。
-# 推論バックエンドは Ollama(OpenAI互換 API)、エージェントは Codex CLI。
-# - kindクラスタを起動(なければ)
-# - marimo拡張イメージと codex-acp イメージをビルドして kind に load
-# - ConfigMap(Ollama接続情報)を apply
-# - マニフェスト一式を apply
-# - 起動を待ってアクセスURLを表示
+# 統合 bootstrap — Step (1/4) と Agent (claude/codex) の4組合せをサポートする。
+#
+# 使用例:
+#   ./scripts/bootstrap.sh --step 1 --agent codex
+#   ./scripts/bootstrap.sh --step 1 --agent claude
+#   ./scripts/bootstrap.sh --step 4 --agent codex
+#   ./scripts/bootstrap.sh --step 4 --agent claude
+#
+# Step と Agent の意味:
+#   Step 1  1Pod = marimo + ACPサイドカー 1セット(1人試用)
+#   Step 4  nginx + 2テナント Pod(複数人 PoC、Hostヘッダ振り分け)
+#   claude  ACP = Claude Code(Pro/Max サブスクトークン必須、port 3017)
+#   codex   ACP = Codex CLI + Ollama(認証不要、port 3021)
+#
+# 必要な前提:
+#   claude → 環境変数 CLAUDE_CODE_OAUTH_TOKEN(`claude setup-token` で取得)
+#   codex  → Ollama が `OLLAMA_HOST=0.0.0.0:11434` で listen、モデル pull 済み
+#            (URL は OLLAMA_BASE_URL env で指定、未指定なら hostname -I から自動推測)
 set -euo pipefail
 
+# ----- パス/共通変数 -----
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# shellcheck source=scripts/lib/common.sh
+source "$REPO_ROOT/scripts/lib/common.sh"
+# shellcheck source=scripts/lib/ollama.sh
+source "$REPO_ROOT/scripts/lib/ollama.sh"
+
 CLUSTER_NAME="marimo"
-NS="marimo"
-KCTX="kind-${CLUSTER_NAME}"
+NAMESPACE="marimo"
+KUBE_CONTEXT="kind-${CLUSTER_NAME}"
 
-# Image タグは manifests/step1/ を single source of truth として扱う。
-extract_image() {
-  { grep -REh "^[[:space:]]+image:[[:space:]]+$1" manifests/step1/ \
-      | head -1 | awk '{print $2}'; } || true
+# ----- CLI 解析 -----
+STEP=""
+AGENT=""
+
+usage() {
+    cat <<'EOF'
+Usage:
+  ./scripts/bootstrap.sh --step <1|4> --agent <claude|codex>
+
+Options:
+  --step <1|4>           1: 1Pod 試用 / 4: 複数人 nginx 振り分け
+  --agent <claude|codex> claude: Claude Code(サブスクトークン)/ codex: Codex CLI + Ollama
+  -h, --help             このヘルプを表示
+
+Environment:
+  CLAUDE_CODE_OAUTH_TOKEN  --agent claude 時に必須(claude setup-token で取得)
+  OLLAMA_BASE_URL          --agent codex 時に推奨(未指定なら hostname -I から自動推測)
+  CODEX_MODEL              --agent codex 時のモデル名(既定: gemma4:31b-cloud)
+  LAN_IP                   アクセスURL案内で使うLAN IP(未指定なら自動推測)
+EOF
 }
-MARIMO_IMAGE="$(extract_image 'marimo-envs/marimo:')"
-ACP_IMAGE="$(extract_image   'marimo-envs/codex-acp:')"
 
-if [[ -z "$MARIMO_IMAGE" || -z "$ACP_IMAGE" ]]; then
-  echo "ERROR: manifests/step1/ から marimo / codex-acp の image タグを抽出できませんでした。" >&2
-  exit 1
-fi
-echo "[=] images from manifests/step1/:"
-echo "    MARIMO_IMAGE=${MARIMO_IMAGE}"
-echo "    ACP_IMAGE   =${ACP_IMAGE}"
-
-# -------- 前提チェック --------
-for tool in docker kind kubectl curl python3; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    case "$tool" in
-      docker|kind|kubectl)
-        echo "ERROR: $tool が見つかりません。'scripts/install-tools.sh' を先に実行してください。" >&2
-        ;;
-      curl)
-        echo "ERROR: curl が見つかりません。codex-catalog 生成時に Ollama /api/show を叩くために必須です。" >&2
-        ;;
-      python3)
-        echo "ERROR: python3 が見つかりません。/api/show の JSON から model.json を組み立てるために必須です。" >&2
-        ;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --step)
+            [[ $# -ge 2 ]] || { usage >&2; die "--step に値が必要です(1 または 4)。"; }
+            STEP="$2"; shift 2 ;;
+        --agent)
+            [[ $# -ge 2 ]] || { usage >&2; die "--agent に値が必要です(claude または codex)。"; }
+            AGENT="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; die "Unknown argument: $1" ;;
     esac
-    exit 1
-  fi
 done
 
-# Ollama エンドポイントは必須。host の Ollama に Pod から到達する URL。
-# 例: http://192.168.64.32:11434/v1
-if [[ -z "${OLLAMA_BASE_URL:-}" ]]; then
-  # 未指定なら hostname -I の LAN IPv4 で自動推測する。
-  # 1段目: 192.168.x.x / 10.x.x.x など「家庭/社内 LAN らしい」レンジ優先で、
-  #        docker bridge 系(172.16-31.x.x)と loopback (127.x.x.x) は除外。
-  AUTO_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
-    | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
-    | grep -v -E '^(127\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)' \
-    | head -1)"
-  # 2段目: 1段目で見つからない=社内LANが 172.* 帯の可能性。
-  # 除外を緩めて loopback だけ外して再試行(docker bridge を誤選択する可能性あり、
-  # 警告を出して OLLAMA_BASE_URL の明示指定を促す)。
-  if [[ -z "$AUTO_IP" ]]; then
-    AUTO_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
-      | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
-      | grep -v -E '^127\.' \
-      | head -1)"
-    if [[ -n "$AUTO_IP" ]]; then
-      echo "  WARN: 192.168.x.x / 10.x.x.x が見つからず、172.x.x.x の AUTO_IP=${AUTO_IP}" >&2
-      echo "        を選択。docker/kind の bridge ネットワークの可能性があります。" >&2
-      echo "        意図と違う場合は OLLAMA_BASE_URL を手動指定してください:" >&2
-      echo "          export OLLAMA_BASE_URL='http://<実際のLAN_IP>:11434/v1'" >&2
-    fi
-  fi
-  if [[ -n "$AUTO_IP" ]]; then
-    OLLAMA_BASE_URL="http://${AUTO_IP}:11434/v1"
-    echo "[=] OLLAMA_BASE_URL 未指定 → 自動推測: ${OLLAMA_BASE_URL}"
-  else
-    cat >&2 <<'EOF'
-ERROR: 環境変数 OLLAMA_BASE_URL が未設定で、自動推測も失敗しました。
-
-  Pod から host の Ollama に到達できる URL を指定してください。
-  Ollama は OLLAMA_HOST=0.0.0.0:11434 で listen している必要があります。
-
-  例:
-    export OLLAMA_BASE_URL='http://192.168.64.32:11434/v1'
-    ./scripts/bootstrap.sh
-EOF
-    exit 1
-  fi
+if [[ "$STEP" != "1" && "$STEP" != "4" ]]; then
+    usage >&2
+    die "--step は 1 か 4 で指定してください(現在: '${STEP}')。"
+fi
+if [[ "$AGENT" != "claude" && "$AGENT" != "codex" ]]; then
+    usage >&2
+    die "--agent は claude か codex で指定してください(現在: '${AGENT}')。"
 fi
 
-# OLLAMA_BASE_URL の入力正規化: 末尾スラッシュ除去 + /v1 サフィックス保証。
-# これにより以下のすべての入力を同等扱いにする:
-#   http://x.x.x.x:11434  / http://x.x.x.x:11434/  / http://x.x.x.x:11434/v1  / http://x.x.x.x:11434/v1/
-# 後段の OLLAMA_API_SHOW_URL 組み立て(${url%/v1}/api/show)で `//api/show` に
-# ならないようにするため必須。
-OLLAMA_BASE_URL="${OLLAMA_BASE_URL%/}"
-case "$OLLAMA_BASE_URL" in
-  */v1) ;;  # 既に /v1 で終わる、何もしない
-  *)    OLLAMA_BASE_URL="${OLLAMA_BASE_URL}/v1" ;;
+echo "[=] bootstrap configuration:"
+echo "    STEP  = ${STEP}"
+echo "    AGENT = ${AGENT}"
+
+# ----- 前提コマンドチェック -----
+require_command docker  "Docker daemon 必須。"
+require_command kind    "scripts/install-tools.sh で導入してください。"
+require_command kubectl "scripts/install-tools.sh で導入してください。"
+# curl / python3 は Codex フローでのみ使う(後の agent別前提チェックで追加要求)
+
+# ----- agent別の前提 env -----
+CODEX_MODEL_DEFAULT="gemma4:31b-cloud"
+
+if [[ "$AGENT" == "claude" ]]; then
+    if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+        die "環境変数 CLAUDE_CODE_OAUTH_TOKEN が未設定です。
+
+  1) ブラウザのある端末で(Claude Pro/Max ログイン状態で):
+       claude setup-token
+     出力された1年有効のトークンをコピー。
+
+  2) この端末で:
+       export CLAUDE_CODE_OAUTH_TOKEN='<paste-token-here>'
+       ./scripts/bootstrap.sh --step ${STEP} --agent claude"
+    fi
+else
+    # codex フロー: curl と python3 は codex-catalog 生成で使う
+    require_command curl    "agent=codex の codex-catalog 生成で Ollama /api/show を叩くために必要。"
+    require_command python3 "/api/show の JSON から model.json を組み立てるために必要。"
+
+    # codex: OLLAMA_BASE_URL を必須、未指定なら hostname -I から自動推測
+    if [[ -z "${OLLAMA_BASE_URL:-}" ]]; then
+        auto_ip="$(detect_lan_ip)"
+        if [[ -n "$auto_ip" ]]; then
+            OLLAMA_BASE_URL="http://${auto_ip}:11434/v1"
+            echo "[=] OLLAMA_BASE_URL 未指定 → 自動推測: ${OLLAMA_BASE_URL}"
+        else
+            die "OLLAMA_BASE_URL 未指定で自動推測も失敗しました。
+  Pod から host の Ollama に到達できる URL を明示してください:
+    export OLLAMA_BASE_URL='http://192.168.x.x:11434/v1'
+    ./scripts/bootstrap.sh --step ${STEP} --agent codex"
+        fi
+    fi
+    OLLAMA_BASE_URL="$(normalize_url "$OLLAMA_BASE_URL")"
+    CODEX_MODEL="${CODEX_MODEL:-${CODEX_MODEL_DEFAULT}}"
+    echo "[=] Codex設定:"
+    echo "    OLLAMA_BASE_URL = ${OLLAMA_BASE_URL}"
+    echo "    CODEX_MODEL     = ${CODEX_MODEL}"
+fi
+
+# ----- kind クラスタ作成/検証 -----
+case "$STEP" in
+    1) cluster_config="kind/cluster-step1.yaml"; required_ports=(30718 30317 30321) ;;
+    4) cluster_config="kind/cluster-step4.yaml"; required_ports=(30080 30317 30321) ;;
 esac
 
-CODEX_MODEL="${CODEX_MODEL:-gemma4:31b-cloud}"
-echo "[=] Codex 設定:"
-echo "    OLLAMA_BASE_URL=${OLLAMA_BASE_URL}"
-echo "    CODEX_MODEL    =${CODEX_MODEL}"
-# 注: wire_api は本構成では明示せず Codex CLI のデフォルト("responses")に任せる
-# (Ollama 公式の Codex 統合形式に準拠)。env での切替機能は不要なため非対応。
-
-# -------- kindクラスタ --------
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
-  echo "[=] kind cluster '${CLUSTER_NAME}' は既に存在します。スキップ。"
-  # Step 1(Codex)が必要とする extraPortMappings (30718, 30321) を検証。
-  node_container="${CLUSTER_NAME}-control-plane"
-  missing=()
-  for p in 30718 30321; do
-    if ! docker port "$node_container" "${p}/tcp" >/dev/null 2>&1; then
-      missing+=("$p")
-    fi
-  done
-  if (( ${#missing[@]} > 0 )); then
-    cat >&2 <<EOF
-ERROR: 既存の kind クラスタ '${CLUSTER_NAME}' に Step 1 (Codex) が必要な
-       ポートマッピングがありません(欠落: ${missing[*]})。
-       Claude 用や Step 4 用の cluster 設定で作られた可能性があります。
-       teardown して再作成してください:
-
-           ./scripts/teardown.sh   # クラスタ削除
-           ./scripts/bootstrap.sh  # Step 1 (Codex) 用設定で再作成
-EOF
-    exit 1
-  fi
+    echo "[=] kind cluster '${CLUSTER_NAME}' は既に存在します。スキップ。"
+    verify_port_mappings "$CLUSTER_NAME" "${required_ports[@]}"
 else
-  echo "[+] kind cluster '${CLUSTER_NAME}' を作成 (Step 1 Codex 設定: 2718/3021 を bind)..."
-  kind create cluster --name "$CLUSTER_NAME" --config kind/cluster-step1.yaml
+    echo "[+] kind cluster '${CLUSTER_NAME}' を作成 (${cluster_config})..."
+    kind create cluster --name "$CLUSTER_NAME" --config "$cluster_config"
 fi
 
-# -------- カスタムイメージ群 --------
-echo "[+] marimo拡張イメージ(marimo[mcp]入り)をビルド: ${MARIMO_IMAGE}"
-docker build -t "$MARIMO_IMAGE" images/marimo
+# ----- agent別 NodePort 競合の事前検知 -----
+# Step/agent 切替時に既存 Service が新構成と同じ nodePort を握っていると
+# `kubectl apply` が「port is already allocated」で落ちる。kubectl のエラーは
+# どの Service が握っているか分かりにくいので、early に check して
+# teardown を促す。
+#   Step 1: Service marimo が nodePort を直接握る(marimo UI 30718 + agent別 ACP port)
+#   Step 4: nginx-gateway が複数 nodePort を集約(http 30080 + agent別 ACP port)
+acp_node_port=$([[ "$AGENT" == "claude" ]] && echo 30317 || echo 30321)
+case "$STEP" in
+    1) allowed_service_name="marimo";        node_ports=(30718 "$acp_node_port") ;;
+    4) allowed_service_name="nginx-gateway"; node_ports=(30080 "$acp_node_port") ;;
+esac
+for node_port in "${node_ports[@]}"; do
+    check_nodeport_conflict "$KUBE_CONTEXT" "$NAMESPACE" "$node_port" "$allowed_service_name"
+done
 
-echo "[+] Codex ACPサイドカーイメージをビルド: ${ACP_IMAGE}"
-docker build -t "$ACP_IMAGE" images/codex-acp
-
-echo "[+] 両イメージをkindクラスタにload..."
-kind load docker-image "$MARIMO_IMAGE" --name "$CLUSTER_NAME"
-kind load docker-image "$ACP_IMAGE"    --name "$CLUSTER_NAME"
-
-# -------- マニフェスト適用 --------
-echo "[+] Namespace と PVC を適用..."
-kubectl --context "$KCTX" apply -f manifests/namespace.yaml
-kubectl --context "$KCTX" apply -f manifests/step1/pvc.yaml
-
-echo "[+] Codex 接続用 ConfigMap を作成/更新..."
-kubectl --context "$KCTX" -n "$NS" create configmap codex-config \
-  --from-literal=ollama_base_url="$OLLAMA_BASE_URL" \
-  --from-literal=model="$CODEX_MODEL" \
-  --dry-run=client -o yaml | kubectl --context "$KCTX" apply -f -
-
-# codex-catalog: Codex CLI の「Model metadata for X not found」警告を抑制する
-# model.json を ConfigMap 化して Pod に注入する(deployment.yaml で必須参照)。
-# 内容は Ollama /api/show の出力 (context_length, capabilities) を元に、
-# Codex の buildCodexModelEntry (cmd/launch/codex.go) と同じフィールド構造で
-# 動的組み立てする。モデル変更時も bootstrap 再実行で自動追従。
-echo "[+] codex-catalog ConfigMap(model.json)を Ollama /api/show から動的生成..."
-# /api/show は /api/ 系(OpenAI互換ではない)。OLLAMA_BASE_URL の /v1 を /api/show に置換
-OLLAMA_API_SHOW_URL="${OLLAMA_BASE_URL%/v1}/api/show"
-CATALOG_TMP="$(mktemp -d)/model.json"
-trap 'rm -rf "$(dirname "$CATALOG_TMP")"' EXIT
-
-# curl の stderr は捨てない(失敗時の診断: 接続失敗、HTTPステータス、TLS エラー等を見せる)。
-SHOW_JSON="$(dirname "$CATALOG_TMP")/api-show.json"
-SHOW_ERR="$(dirname "$CATALOG_TMP")/api-show.err"
-
-# JSON ペイロードは Python の json.dumps で安全にエスケープして組み立てる。
-# CODEX_MODEL に " や \ や改行が含まれていても curl -d が壊れない。
-SHOW_PAYLOAD=$(CODEX_MODEL="$CODEX_MODEL" python3 -c \
-  'import json, os; print(json.dumps({"name": os.environ["CODEX_MODEL"]}))')
-
-if ! curl -fsS -X POST "$OLLAMA_API_SHOW_URL" \
-    -H 'Content-Type: application/json' \
-    -d "$SHOW_PAYLOAD" \
-    -o "$SHOW_JSON" 2>"$SHOW_ERR"; then
-  echo "ERROR: Ollama /api/show 呼び出し失敗。Ollama が ${OLLAMA_API_SHOW_URL} で" >&2
-  echo "       到達可能でモデル '${CODEX_MODEL}' が pull 済みであることを確認してください。" >&2
-  echo "  curl stderr:" >&2
-  sed 's/^/    /' "$SHOW_ERR" >&2
-  if [[ -s "$SHOW_JSON" ]]; then
-    echo "  応答内容(先頭5行):" >&2
-    head -5 "$SHOW_JSON" | sed 's/^/    /' >&2
-  fi
-  exit 1
-fi
-
-# Python で /api/show の応答から model.json を組み立てる。
-# 取得項目:
-#   - model_info.<family>.context_length(モデルのコンテキスト窓)
-#   - capabilities(vision あれば input_modalities に image 追加)
-# -cloud サフィックス付きモデルは truncation mode を tokens に。
+# ----- カスタムイメージ build & kind load -----
+# image タグは「マニフェストを唯一の真の情報源」とし、bootstrap が build/load する
+# タグと kubectl apply で動かす Deployment のタグが drift しないようマニフェストから
+# 抽出する(過去 PR で確立した方針)。
 #
-# heredoc は <<'PYEOF' とクォートして Python ソースのシェル展開を抑止。
-# 引数(モデル名、show応答パス)は env 経由で渡す(" や \ が含まれていても安全)。
-SHOW_JSON_PATH="$SHOW_JSON" \
-CODEX_MODEL="$CODEX_MODEL" \
-python3 <<'PYEOF' > "$CATALOG_TMP"
-import json, os
-with open(os.environ["SHOW_JSON_PATH"]) as f:
-    show = json.load(f)
-model_name = os.environ["CODEX_MODEL"]
-# context_length は model_info.<family>.context_length に入る(family は様々)
-ctx_len = 128_000  # fallback
-for k, v in (show.get("model_info") or {}).items():
-    if k.endswith(".context_length") and isinstance(v, int):
-        ctx_len = v
-        break
-caps = show.get("capabilities") or []
-modalities = ["text"] + (["image"] if "vision" in caps else [])
-# -cloud モデルは Codex 内部で truncation mode が tokens 扱いされる
-truncation_mode = "tokens" if model_name.endswith("-cloud") else "bytes"
-entry = {
-    "slug": model_name,
-    "display_name": model_name,
-    "context_window": ctx_len,
-    "shell_type": "default",
-    "visibility": "list",
-    "supported_in_api": True,
-    "priority": 0,
-    "truncation_policy": {"mode": truncation_mode, "limit": 10000},
-    "input_modalities": modalities,
-    "base_instructions": "",
-    "support_verbosity": True,
-    "default_verbosity": "low",
-    "supports_parallel_tool_calls": False,
-    "supports_reasoning_summaries": False,
-    "supported_reasoning_levels": [],
-    "experimental_supported_tools": [],
-}
-print(json.dumps({"models": [entry]}, indent=2))
-PYEOF
+# 検索範囲は manifests/step${STEP} 全体。step1 では marimo image が base/ にあるので
+# overlay (codex|claude) だけ見ると拾えない、と base のみ見ると agent差分が拾えない。
+# 全体検索なら両方拾える(片方の agent overlay の image も拾うが、agent ごとに
+# image prefix を分けているので競合しない: codex-acp と acp-agent は別 prefix)。
+manifest_search_root="manifests/step${STEP}"
+case "$AGENT" in
+    claude) acp_image_prefix="marimo-envs/acp-agent:"; acp_dir="images/acp-agent" ;;
+    codex)  acp_image_prefix="marimo-envs/codex-acp:"; acp_dir="images/codex-acp" ;;
+esac
+marimo_image="$(extract_image "$manifest_search_root" "marimo-envs/marimo:")"
+acp_image="$(extract_image    "$manifest_search_root" "$acp_image_prefix")"
+[[ -n "$marimo_image" ]] || die "${manifest_search_root} から marimo image を抽出できませんでした。"
+[[ -n "$acp_image"    ]] || die "${manifest_search_root} から ${AGENT} image を抽出できませんでした。"
+echo "[=] images from ${manifest_search_root}:"
+echo "    marimo_image = ${marimo_image}"
+echo "    acp_image    = ${acp_image}"
 
-echo "[=] 生成された model.json プレビュー:"
-head -10 "$CATALOG_TMP" | sed 's/^/    /'
+echo "[+] marimo拡張イメージをビルド: ${marimo_image}"
+docker build -t "$marimo_image" images/marimo
 
-kubectl --context "$KCTX" -n "$NS" create configmap codex-catalog \
-  --from-file=model.json="$CATALOG_TMP" \
-  --dry-run=client -o yaml | kubectl --context "$KCTX" apply -f -
+echo "[+] ${AGENT} ACPサイドカーイメージをビルド: ${acp_image}"
+docker build -t "$acp_image" "$acp_dir"
 
-echo "[+] Deployment と Service を適用..."
-kubectl --context "$KCTX" apply -f manifests/step1/deployment.yaml
-kubectl --context "$KCTX" apply -f manifests/step1/service.yaml
+echo "[+] 両イメージを kind クラスタに load..."
+kind load docker-image "$marimo_image" --name "$CLUSTER_NAME"
+kind load docker-image "$acp_image"    --name "$CLUSTER_NAME"
 
-# ConfigMap 更新を確実に反映するため毎回 rollout restart。
-echo "[+] Pod を rollout restart (新 ConfigMap を読ませる)..."
-kubectl --context "$KCTX" -n "$NS" rollout restart deployment/marimo
+# ----- Namespace -----
+echo "[+] Namespace を適用..."
+kubectl --context "$KUBE_CONTEXT" apply -f manifests/namespace.yaml
 
-echo "[+] marimo Deployment の rollout を待機..."
-kubectl --context "$KCTX" -n "$NS" rollout status deployment/marimo --timeout=300s
+# ----- agent別の動的リソース(Secret / ConfigMap)作成 -----
+if [[ "$AGENT" == "claude" ]]; then
+    echo "[+] Claude OAuth トークン Secret を作成/更新..."
+    # --from-literal=token=$TOKEN だとプロセス引数として残り、同一ホストの他ユーザーが
+    # `ps` でトークンを読めてしまう。一時ファイル(mode 600)+ --from-file 経由で
+    # コマンドラインにトークンを載せないようにする。
+    token_file="$(mktemp)"
+    chmod 600 "$token_file"
+    # EXIT trap を一時的に上書きして、途中で失敗した場合も $token_file を確実に
+    # 削除する。Bash の trap はシグナルごとに1つのハンドラしか持てないので、
+    # この区間は EXIT trap が rm 専用に置き換わる。区間終了時に `trap - EXIT` で
+    # デフォルト(なし)に戻す。Codex 側の trap(catalog_dir 削除)は別のフロー
+    # なのでこの区間とは重ならない。
+    trap 'rm -f "$token_file"' EXIT
+    printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" > "$token_file"
+    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create secret generic claude-code-token \
+        --from-file=token="$token_file" \
+        --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f -
+    rm -f "$token_file"
+    trap - EXIT
+else
+    echo "[+] Codex 接続 ConfigMap (codex-config) を作成/更新..."
+    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create configmap codex-config \
+        --from-literal=ollama_base_url="$OLLAMA_BASE_URL" \
+        --from-literal=model="$CODEX_MODEL" \
+        --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f -
 
-# -------- アクセス情報 --------
-if [[ -z "${LAN_IP:-}" ]]; then
-  LAN_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
-    | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
-    | grep -v -E '^(127\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)' \
-    | head -1)"
+    echo "[+] codex-catalog を Ollama /api/show から動的生成..."
+    catalog_dir="$(mktemp -d)"
+    trap 'rm -rf "$catalog_dir"' EXIT
+
+    fetch_ollama_model_info "$OLLAMA_BASE_URL" "$CODEX_MODEL" "$catalog_dir/api-show.json"
+    build_codex_model_catalog "$catalog_dir/api-show.json" "$CODEX_MODEL" "$catalog_dir/model.json"
+
+    echo "[=] 生成された model.json プレビュー:"
+    head -10 "$catalog_dir/model.json" | sed 's/^/    /'
+
+    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create configmap codex-catalog \
+        --from-file=model.json="$catalog_dir/model.json" \
+        --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f -
 fi
-if [[ -z "${LAN_IP:-}" ]]; then
-  LAN_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' \
-    | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
-    | head -1)"
-fi
 
-cat <<EOF
+# ----- マニフェスト適用 -----
+overlay="manifests/step${STEP}/${AGENT}"
+echo "[+] manifest を適用: ${overlay}"
+kubectl --context "$KUBE_CONTEXT" apply -k "$overlay"
 
-====================================================================
- marimo + Codex ACP は起動しました(推論: Ollama via ${CODEX_MODEL})。
+# ----- rollout 再起動&待機 -----
+case "$STEP" in
+    1)
+        deployments=(marimo)
+        rollout_timeouts=(300)
+        ;;
+    4)
+        deployments=(nginx-gateway marimo-nb1 marimo-nb2)
+        rollout_timeouts=(120 300 300)
+        ;;
+esac
 
- このマシンから:
-   http://localhost:2718/
+echo "[+] 全 Deployment を rollout restart (新 Secret/ConfigMap を確実に読ませる)..."
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout restart \
+    "${deployments[@]/#/deploy/}"
 
-EOF
-if [[ -n "${LAN_IP}" ]]; then
-  cat <<EOF
- 同じLAN上の他PCから:
-   http://${LAN_IP}:2718/
+echo "[+] rollout 完了を待機..."
+for i in "${!deployments[@]}"; do
+    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout status \
+        "deploy/${deployments[$i]}" --timeout="${rollout_timeouts[$i]}s"
+done
 
-EOF
-fi
-cat <<EOF
- marimo UI を開いたら:
-   1. Settings (右上歯車) → Lab → "agents" を有効化
-   2. 左サイドバーのエージェントアイコンをクリック
-   3. ドロップダウンから "Codex" を選択
-   4. ブラウザは ws://<同じホスト>:3021/message に自動接続します
+# ----- アクセス情報 -----
+lan_ip="${LAN_IP:-$(detect_lan_ip)}"
 
- 状態確認(current context が別クラスタの可能性に備えて --context を明示):
-   kubectl --context ${KCTX} -n ${NS} get pods,svc
-   kubectl --context ${KCTX} -n ${NS} logs deploy/marimo -c marimo
-   kubectl --context ${KCTX} -n ${NS} logs deploy/marimo -c codex-acp
+echo
+echo "===================================================================="
+echo " marimo + ${AGENT} ACP は起動しました (Step ${STEP})."
+echo
+case "$STEP" in
+    1)
+        agent_port=$([[ "$AGENT" == "claude" ]] && echo 3017 || echo 3021)
+        echo " このマシンから:"
+        echo "   http://localhost:2718/"
+        if [[ -n "$lan_ip" ]]; then
+            echo
+            echo " 同じLAN上の他PCから:"
+            echo "   http://${lan_ip}:2718/"
+        fi
+        echo
+        echo " marimo UI で:"
+        echo "   1. Settings → Lab → \"agents\" を有効化(初回のみ)"
+        echo "   2. 左サイドバーのエージェントアイコン"
+        echo "   3. ドロップダウンから \"${AGENT^}\" を選択"
+        echo "   4. ブラウザは ws://<同じホスト>:${agent_port}/message に自動接続"
+        ;;
+    4)
+        if [[ -n "$lan_ip" ]]; then
+            echo " アクセスURL(同じLAN上のどの端末からでも):"
+            echo "   nb1: http://nb1.${lan_ip}.nip.io/"
+            echo "   nb2: http://nb2.${lan_ip}.nip.io/"
+        else
+            echo " LAN IP の自動推測に失敗。nip.io 用に LAN_IP env を明示指定してください。"
+        fi
+        ;;
+esac
 
- Codex から Ollama への到達確認:
-   kubectl --context ${KCTX} -n ${NS} exec deploy/marimo -c codex-acp -- \\
-     sh -c "wget -qO- \${OLLAMA_BASE_URL}/models 2>/dev/null || echo 'wget無し→ログ確認'"
-
- 後片付け:
-   ./scripts/teardown.sh
-====================================================================
-EOF
+echo
+echo " 状態確認:"
+echo "   kubectl --context ${KUBE_CONTEXT} -n ${NAMESPACE} get pods,svc"
+for dep in "${deployments[@]}"; do
+    echo "   kubectl --context ${KUBE_CONTEXT} -n ${NAMESPACE} logs deploy/${dep}"
+done
+echo
+echo " 後片付け:"
+echo "   ./scripts/teardown.sh"
+echo "===================================================================="

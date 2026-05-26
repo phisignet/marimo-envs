@@ -1,0 +1,10 @@
+# Step 1 base — marimo container と PVC だけ。
+# overlay (codex / claude) が ACP サイドカーと Service を足す。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: marimo
+
+resources:
+  - pvc.yaml
+  - marimo-deployment.yaml

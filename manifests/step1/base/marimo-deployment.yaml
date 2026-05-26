@@ -1,0 +1,59 @@
+# Step 1 の marimo Deployment(base)。
+# overlay 側で ACP サイドカーコンテナを strategic-merge-patch で追加する。
+#
+# - strategy=Recreate: PVC(RWO)を使うため、Rolling だと新旧Podが同時にマウント不可。
+# - securityContext.fsGroup=1000: 共有PVCを appuser/node(uid 1000)で書き込めるよう
+#   k8s が PV を chown :1000 + setgid してくれる。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marimo
+  namespace: marimo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: marimo
+  template:
+    metadata:
+      labels:
+        app: marimo
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: marimo
+          image: marimo-envs/marimo:0.1.0  # bootstrap.sh がビルド → kind load
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - name: PORT
+              value: "2718"
+            - name: HOST
+              value: "0.0.0.0"
+          ports:
+            - name: marimo
+              containerPort: 2718
+              protocol: TCP
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: marimo
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              memory: "2Gi"
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: marimo-workspace

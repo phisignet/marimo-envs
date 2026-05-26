@@ -1,0 +1,54 @@
+# Step 1 / codex overlay: marimo Deployment に codex-acp サイドカーを追加する
+# strategic-merge-patch。
+#
+# 推論バックエンドは Ollama(OpenAI互換 API)、認証情報は不要
+# (~/.codex/config.toml の requires_openai_auth = false でバイパス)。
+# entrypoint.sh が OLLAMA_BASE_URL / CODEX_MODEL を env から読んで
+# ~/.codex/config.toml と model_catalog_json を組み立てる。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marimo
+spec:
+  template:
+    spec:
+      containers:
+        - name: codex-acp
+          image: marimo-envs/codex-acp:0.1.0  # bootstrap.sh がビルド → kind load
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - name: OLLAMA_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: codex-config
+                  key: ollama_base_url
+            - name: CODEX_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: codex-config
+                  key: model
+          ports:
+            - name: acp
+              containerPort: 3021
+              protocol: TCP
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            # codex-catalog ConfigMap(bootstrap.sh が Ollama /api/show から動的生成)を
+            # /etc/codex-catalog/model.json として readonly mount。
+            # ~/.codex 直下にマウントすると親dirが root所有になり entrypoint が
+            # config.toml を書けなくなるため、別パスに置いて config から参照する。
+            - name: codex-catalog
+              mountPath: /etc/codex-catalog
+              readOnly: true
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              memory: "2Gi"
+      volumes:
+        - name: codex-catalog
+          configMap:
+            name: codex-catalog

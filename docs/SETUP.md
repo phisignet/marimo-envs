@@ -1,6 +1,6 @@
 # 詳細セットアップとトラブルシューティング
 
-> **Step 1(1人での試用)と Step 4(複数人並走PoC)の両方を扱う。** 共通の前提・トークン取得・MCP動作確認は両方に効く。bootstrapスクリプトと一部マニフェストだけが Step ごとに分かれる。
+> **Step 1(1人での試用)と Step 4(複数人並走PoC)の両方を扱う。** 共通の前提・トークン取得・MCP動作確認は両方に効く。本書は **`--agent claude`** 前提で書かれている(OAuthトークン取得など Claude 固有手順を含むため)。**Codex + Ollama 構成は README の「統合 CLI」セクションを参照**(`./scripts/bootstrap.sh --step <S> --agent codex`)。
 
 ## 前提環境の確認
 
@@ -52,7 +52,7 @@ claude setup-token
 
 ```bash
 export CLAUDE_CODE_OAUTH_TOKEN='paste-here'
-./scripts/bootstrap.sh
+./scripts/bootstrap.sh --step 1 --agent claude
 ```
 
 スクリプトは以下を順に実行:
@@ -66,13 +66,13 @@ export CLAUDE_CODE_OAUTH_TOKEN='paste-here'
 
 ```bash
 export CLAUDE_CODE_OAUTH_TOKEN='paste-here'
-./scripts/bootstrap-step4.sh
+./scripts/bootstrap.sh --step 4 --agent claude
 ```
 
 > ⚠️ Step 1 と Step 4 は同じクラスタ名 `marimo` と同じ NodePort `30317` を使うため、
 > 既に Step 1 が apply 済みの状態で Step 4 を実行すると Service 作成が NodePort 競合で
-> 失敗する。`bootstrap-step4.sh` は事前にこれを検知して停止し、`teardown.sh` を促す。
-> Step 切り替え時はクラスタ削除 → bootstrap の流れに統一するのが安全。
+> 失敗する。`bootstrap.sh` は事前にこれを `check_nodeport_conflict` で検知して停止し、
+> `teardown.sh` を促す。Step 切り替え時はクラスタ削除 → bootstrap の流れに統一するのが安全。
 
 Step 1 との違い:
 - kindクラスタの `extraPortMappings` に **`hostPort: 80`** が必要(`kind/cluster-step4.yaml` で対応済。Step 1 とは別ファイルなので、Step1 ユーザーが :80 占有環境でも巻き添えで kind create が落ちることはない)
@@ -151,7 +151,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
 - **`401 Invalid bearer token`**: トークンが間違っているか期限切れ。最頻ケースは `claude setup-token` のフローで「**ブラウザに出る認可コード**」を `CLAUDE_CODE_OAUTH_TOKEN` に入れてしまうミス。手順2の「フローと注意点」を再読。正しいトークンを取り直して bootstrap.sh を再実行すれば Secret の更新 + Pod の rollout restart まで自動で行われる:
   ```bash
   export CLAUDE_CODE_OAUTH_TOKEN='<正しい長いトークン>'
-  ./scripts/bootstrap.sh
+  ./scripts/bootstrap.sh --step <S> --agent claude   # 起動時と同じ --step を指定
   ```
 
 ### LAN の他PC から繋がらない
@@ -254,10 +254,10 @@ marimo UI のエージェントパネルで、Claude に「現在のMCPツール
 
 | Step | 内容 | 状態 |
 |---|---|---|
-| 1 | 1人での試用(3017直接公開) | ✅ 完了。`scripts/bootstrap.sh` で再現 |
+| 1 | 1人での試用(ACP直接公開: claude=3017 / codex=3021) | ✅ 完了。`scripts/bootstrap.sh --step 1 --agent <claude\|codex>` で再現 |
 | 2 | 社内ネットワークでのワイルドカードDNS手配 | (家庭環境では nip.io で代替済み。会社では情シスに相談予定) |
 | 3 | 上司含む2–3人デモ | 未着手 |
-| 4 | 複数ユーザー並列 + nginx Host振り分け(PoC) | ✅ 完了。`scripts/bootstrap-step4.sh` で再現。`nb1` / `nb2` の2テナントで動作確認済み |
+| 4 | 複数ユーザー並列 + nginx Host振り分け(PoC) | ✅ 完了。`scripts/bootstrap.sh --step 4 --agent <claude\|codex>` で再現。`nb1` / `nb2` の2テナントで動作確認済み |
 | 5 | 本番k8s(EKS/GKE/AKS等)へ移行 | 未着手。LoadBalancer / Ingress / TLS / 認証(Basic / OIDC) / 動的テナント発行 |
 
 **Step 4 → Step 5 へ拡張する際の見立て:**

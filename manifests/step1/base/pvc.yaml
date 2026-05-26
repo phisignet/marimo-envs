@@ -1,7 +1,7 @@
 # marimoとACPサイドカーが共有する作業ボリューム。
 # ノートブックファイル(.py / .md)はここに保存され、再起動を跨いで永続化される。
 # ACPエージェントが書き込むファイルもmarimoから即見えるよう、両コンテナで同一パス
-# /workspace にマウントする(deployment.yaml 参照)。
+# /workspace にマウントする。
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
