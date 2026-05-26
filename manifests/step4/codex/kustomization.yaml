@@ -1,0 +1,17 @@
+# Step 4 / codex overlay: 同一サーバーで 2 テナント(nb1, nb2)を並走させる
+# 複数人 PoC 構成。ACPエージェントは Codex CLI + Ollama(codex-acp, port 3021)。
+#
+# 動的生成リソース(bootstrap.sh が apply 前に kubectl create で組み立てる、
+# nb1/nb2 で共有):
+#   - ConfigMap codex-config   (OLLAMA_BASE_URL, CODEX_MODEL)
+#   - ConfigMap codex-catalog  (Ollama /api/show を Codex model.json に変換)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: marimo
+
+resources:
+  - nginx-configmap.yaml
+  - nginx-deployment.yaml
+  - notebook-nb1.yaml
+  - notebook-nb2.yaml

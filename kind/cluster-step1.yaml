@@ -1,16 +1,20 @@
-# kind クラスタ設定 — Step 1(1人での試用)専用、Codex+Ollama 構成。
+# kind クラスタ設定 — Step 1(1人用、両 agent 対応)。
 #
-# Step 4 用設定(kind/cluster-step4.yaml)とは別ファイルにしている理由:
-# - Step 4 はホスト :80 を bind する。Step 1 ユーザーが :80 を別用途で
-#   使っている環境で共通設定を使うと kind create がいきなり失敗する。
+# Claude (port 3017) と Codex (port 3021) のどちらでも切替できるよう、
+# 両ポートを bind しておく(Pod 側は選んだ agent のポートしか listen しないので
+# 余分に open しても害なし)。これにより bootstrap.sh の --agent 切替時に
+# kind cluster 自体は再作成不要(Service だけ apply し直せばよい)。
+#
+# Step 4 用設定(kind/cluster-step4.yaml)と分けている理由:
+# - Step 4 はホスト :80 を bind するため、:80 が他用途で使われている環境で
+#   Step 1 ユーザーが共通設定を使うと kind create がいきなり失敗する。
 # - Step 1 では :80 をそもそも使わないので、開けないことで巻き添えを防ぐ。
-# Step を切り替えるときは teardown.sh で再作成すること(本リポジトリの方針)。
+# Step 1↔Step 4 の切替は teardown.sh で再作成すること(本リポジトリの方針)。
 #
-# 重要(設計の核心): marimoのACPエージェント(Codex = ポート3021)は
-# ブラウザが window.location.hostname:3021 にハードコードで直結する仕様
-# (`frontend/src/components/chat/acp/state.ts` の getAgentWebSocketUrl、
-#  AGENT_CONFIG で agentId ごとに固定 port)。
-# そのため marimo の UI (2718) と ACP の 3021 を「同一ホスト名/IPで」LAN に
+# 重要(設計の核心): marimoのACPエージェントは、ブラウザが
+# window.location.hostname:<agent固有port> にハードコードで直結する仕様
+# (`frontend/src/components/chat/acp/state.ts` の getAgentWebSocketUrl)。
+# そのため marimo の UI (2718) と ACP の port を「同一ホスト名/IPで」LAN に
 # 同時公開する必要がある。
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -24,7 +28,13 @@ nodes:
         listenAddress: "0.0.0.0"
         protocol: TCP
 
-      # ACPエージェント(codex-acp) - ホスト 3021 → ノード(NodePort) 30321
+      # ACPエージェント(Claude Code) - ホスト 3017 → ノード(NodePort) 30317
+      - containerPort: 30317
+        hostPort: 3017
+        listenAddress: "0.0.0.0"
+        protocol: TCP
+
+      # ACPエージェント(Codex CLI) - ホスト 3021 → ノード(NodePort) 30321
       - containerPort: 30321
         hostPort: 3021
         listenAddress: "0.0.0.0"

@@ -1,0 +1,136 @@
+# 共通ライブラリ — bootstrap.sh / teardown.sh から source して使う。
+# このファイル単体での実行は想定しない(set -e は呼び出し側の責任)。
+#
+# 公開関数:
+#   die <message>           STDERR にメッセージを出して exit 1
+#   require_command <cmd> <description>  コマンド存在チェック、無ければ die
+#   detect_lan_ip           hostname -I から LAN の IPv4 を抽出(2段fallback)
+#   normalize_url <url>     末尾スラッシュ除去 + /v1 サフィックス保証
+#   require_kind_cluster <name>   kind クラスタの存在チェック、無ければ die
+#   verify_port_mappings <cluster> <port...>  kind ノードに指定ポートが bind されているか
+#   check_nodeport_conflict <context> <namespace> <nodePort> <allowed_service_pattern>
+#                           NodePort 衝突を事前検知(allowed pattern にマッチする Service は除外)
+
+# ----- 基本ユーティリティ -----
+
+# die <message>: エラーメッセージを STDERR に出して exit 1
+die() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+# require_command <cmd> <description>:
+#   コマンドが PATH に無ければ description 付きで die。
+require_command() {
+    local command="$1" description="$2"
+    if ! command -v "$command" >/dev/null 2>&1; then
+        die "$command が見つかりません。$description"
+    fi
+}
+
+# ----- LAN IP 検出 -----
+
+# detect_lan_ip:
+#   hostname -I から LAN の IPv4 アドレスを 1 つ抽出して echo する。
+#   1段目: 192.168.x.x / 10.x.x.x など「家庭/社内LANらしい」を優先
+#          (docker bridge 172.16-31.x.x と loopback 127.x.x.x は除外)。
+#   2段目: 1段目が空のとき loopback だけ除外して再試行。
+#          見つかったら警告を STDERR に出力(docker bridge 誤選択の可能性ありのため)。
+#   どちらでも見つからなければ空文字を返す。
+#
+# 呼び出し側:
+#   lan_ip="$(detect_lan_ip)" や if lan_ip="$(detect_lan_ip)" && [[ -n "$lan_ip" ]]; then ... fi
+detect_lan_ip() {
+    local lan_ip
+    lan_ip="$(hostname -I 2>/dev/null | tr ' ' '\n' \
+        | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+        | grep -v -E '^(127\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)' \
+        | head -1)"
+    if [[ -z "$lan_ip" ]]; then
+        lan_ip="$(hostname -I 2>/dev/null | tr ' ' '\n' \
+            | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+            | grep -v -E '^127\.' \
+            | head -1)"
+        if [[ -n "$lan_ip" ]]; then
+            echo "  WARN: 192.168.x.x / 10.x.x.x が見つからず、172.x.x.x の lan_ip=${lan_ip}" >&2
+            echo "        を選択。docker/kind の bridge ネットワークの可能性があります。" >&2
+        fi
+    fi
+    echo "$lan_ip"
+}
+
+# ----- URL 正規化 -----
+
+# normalize_url <url>:
+#   末尾スラッシュを除去し、/v1 で終わるよう保証して echo する。
+#   入力例:
+#     http://x.x.x.x:11434         → http://x.x.x.x:11434/v1
+#     http://x.x.x.x:11434/         → http://x.x.x.x:11434/v1
+#     http://x.x.x.x:11434/v1       → http://x.x.x.x:11434/v1
+#     http://x.x.x.x:11434/v1/      → http://x.x.x.x:11434/v1
+normalize_url() {
+    local url="${1%/}"
+    case "$url" in
+        */v1) ;;
+        *) url="${url}/v1" ;;
+    esac
+    echo "$url"
+}
+
+# ----- kind クラスタ検証 -----
+
+# require_kind_cluster <name>:
+#   指定名の kind クラスタが存在しなければ die。
+require_kind_cluster() {
+    local name="$1"
+    if ! kind get clusters 2>/dev/null | grep -q "^${name}$"; then
+        die "kind クラスタ '${name}' が存在しません。bootstrap.sh で作成してください。"
+    fi
+}
+
+# verify_port_mappings <cluster_name> <port...>:
+#   kind ノードコンテナに指定の containerPort が docker port で確認できるか検証。
+#   欠落があれば die(teardown 案内付き)。
+#   呼び出し例: verify_port_mappings marimo 30718 30317
+verify_port_mappings() {
+    local cluster_name="$1"; shift
+    local node_container="${cluster_name}-control-plane"
+    local missing=()
+    local port
+    for port in "$@"; do
+        if ! docker port "$node_container" "${port}/tcp" >/dev/null 2>&1; then
+            missing+=("$port")
+        fi
+    done
+    if (( ${#missing[@]} > 0 )); then
+        die "既存の kind クラスタ '${cluster_name}' に必要なポートマッピングが
+       ありません(欠落: ${missing[*]})。
+       他の Step 用 cluster 設定で作られた可能性があります。teardown して再作成してください:
+
+           ./scripts/teardown.sh
+           ./scripts/bootstrap.sh --step <STEP> --agent <AGENT>"
+    fi
+}
+
+# check_nodeport_conflict <context> <namespace> <nodePort> <allowed_service_name>:
+#   指定 NodePort を「allowed_service_name 以外の Service」が握っていないか検証。
+#   衝突していれば die(teardown 案内付き)。
+#
+#   引数:
+#     context      kubectl --context に渡す値(例: kind-marimo)
+#     namespace    Service の namespace(例: marimo)
+#     nodePort     検査対象 NodePort(例: 30317)
+#     allowed_service_name  この Service 名なら衝突扱いしない(自分自身を除外する用)
+check_nodeport_conflict() {
+    local context="$1" namespace="$2" node_port="$3" allowed_service_name="$4"
+    local conflicting
+    conflicting=$({ kubectl --context "$context" -n "$namespace" get svc \
+        -o go-template='{{range .items}}{{$name := .metadata.name}}{{range .spec.ports}}{{if eq .nodePort '"${node_port}"'}}{{$name}}{{"\n"}}{{end}}{{end}}{{end}}' \
+        2>/dev/null | grep -v "^${allowed_service_name}\$" | grep -v '^$' | head -1; } || true)
+    if [[ -n "$conflicting" ]]; then
+        die "NodePort ${node_port} が既に Service '${conflicting}' に割り当てられています。
+       Step/agent 切替時はクラスタ再作成が必要です。先に teardown してください:
+
+           ./scripts/teardown.sh"
+    fi
+}

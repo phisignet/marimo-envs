@@ -1,0 +1,20 @@
+# Step 1 / codex overlay: base に codex-acp サイドカー + Service を足す。
+#
+# 動的生成リソース(bootstrap.sh が apply 前に kubectl create で組み立てる):
+#   - ConfigMap codex-config   (OLLAMA_BASE_URL, CODEX_MODEL)
+#   - ConfigMap codex-catalog  (Ollama /api/show を Codex model.json に変換)
+# overlay 自体には含めないが、Deployment が configMapKeyRef / volume で参照する。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: marimo
+
+resources:
+  - ../base
+  - service.yaml
+
+patches:
+  - path: acp-patch.yaml
+    target:
+      kind: Deployment
+      name: marimo

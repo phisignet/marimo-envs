@@ -1,0 +1,19 @@
+# Step 1 / claude overlay: base に acp-agent (Claude Code) サイドカー + Service を足す。
+#
+# 動的生成リソース(bootstrap.sh が apply 前に kubectl create で組み立てる):
+#   - Secret claude-code-token (CLAUDE_CODE_OAUTH_TOKEN を平文で格納)
+# overlay 自体には含めないが、Deployment が secretKeyRef で参照する。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: marimo
+
+resources:
+  - ../base
+  - service.yaml
+
+patches:
+  - path: acp-patch.yaml
+    target:
+      kind: Deployment
+      name: marimo
