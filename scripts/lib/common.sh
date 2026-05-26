@@ -8,8 +8,11 @@
 #   normalize_url <url>     末尾スラッシュ除去 + /v1 サフィックス保証
 #   require_kind_cluster <name>   kind クラスタの存在チェック、無ければ die
 #   verify_port_mappings <cluster> <port...>  kind ノードに指定ポートが bind されているか
-#   check_nodeport_conflict <context> <namespace> <nodePort> <allowed_service_pattern>
-#                           NodePort 衝突を事前検知(allowed pattern にマッチする Service は除外)
+#   check_nodeport_conflict <context> <namespace> <node_port> <allowed_service_name>
+#                           NodePort 衝突を事前検知(allowed_service_name と完全一致する
+#                           Service は除外)
+#   extract_image <manifest_glob> <name_prefix>
+#                           マニフェストから `image:` 行を抽出(image タグの単一情報源化)
 
 # ----- 基本ユーティリティ -----
 
@@ -112,15 +115,16 @@ verify_port_mappings() {
     fi
 }
 
-# check_nodeport_conflict <context> <namespace> <nodePort> <allowed_service_name>:
-#   指定 NodePort を「allowed_service_name 以外の Service」が握っていないか検証。
-#   衝突していれば die(teardown 案内付き)。
+# check_nodeport_conflict <context> <namespace> <node_port> <allowed_service_name>:
+#   指定 NodePort を「allowed_service_name と完全一致する Service 以外」が握って
+#   いないか検証。衝突していれば die(teardown 案内付き)。
 #
 #   引数:
-#     context      kubectl --context に渡す値(例: kind-marimo)
-#     namespace    Service の namespace(例: marimo)
-#     nodePort     検査対象 NodePort(例: 30317)
-#     allowed_service_name  この Service 名なら衝突扱いしない(自分自身を除外する用)
+#     context              kubectl --context に渡す値(例: kind-marimo)
+#     namespace            Service の namespace(例: marimo)
+#     node_port            検査対象 NodePort(例: 30317)
+#     allowed_service_name この名前と完全一致する Service なら衝突扱いしない
+#                          (自分自身を除外する用、glob/正規表現ではない)
 check_nodeport_conflict() {
     local context="$1" namespace="$2" node_port="$3" allowed_service_name="$4"
     local conflicting
@@ -133,4 +137,22 @@ check_nodeport_conflict() {
 
            ./scripts/teardown.sh"
     fi
+}
+
+# extract_image <manifest_search_root> <image_name_prefix>:
+#   マニフェストツリーから `image: <prefix>...` を含む行を再帰検索し、最初に見つかった
+#   image 値を echo する。bootstrap.sh が docker build / kind load する image タグと、
+#   kubectl apply で動かす Deployment の image タグを「マニフェストを唯一の真の情報源」
+#   とすることで drift を構造的に排除する。
+#
+#   引数:
+#     manifest_search_root  検索開始ディレクトリ(例: manifests/step1)
+#     image_name_prefix     image 名のプレフィックス(例: "marimo-envs/codex-acp:")
+#
+#   注意: set -euo pipefail 下では grep 未マッチで関数が即終了する。
+#   { ...; } || true で握りつぶし、空文字を返して呼び出し側のチェックに委ねる。
+extract_image() {
+    local manifest_search_root="$1" image_name_prefix="$2"
+    { grep -REh "^[[:space:]]+image:[[:space:]]+${image_name_prefix}" "$manifest_search_root" \
+        | head -1 | awk '{print $2}'; } || true
 }

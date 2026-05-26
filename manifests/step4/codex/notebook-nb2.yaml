@@ -1,7 +1,7 @@
 # notebook 環境 #2 (nb2, Codex+Ollama) — PVC + Deployment + Service の1セット。
 # 内容は notebook-nb1.yaml と同型(`sed 's/nb1/nb2/g'` で生成可能)。
 #
-# Step 4 では nginx が Hostヘッダ nb2.<IP>.nip.io / nb2.<IP>.nip.io で
+# Step 4 では nginx が Hostヘッダ nb1.<IP>.nip.io / nb2.<IP>.nip.io で
 # それぞれの Service に振り分ける。Codex 版は port 3021、acp は codex-acp、
 # 認証情報は ConfigMap codex-config(OLLAMA_BASE_URL / CODEX_MODEL)経由。
 # codex-catalog ConfigMap は bootstrap.sh が Ollama /api/show から動的生成。

@@ -80,8 +80,7 @@ echo "    AGENT = ${AGENT}"
 require_command docker  "Docker daemon 必須。"
 require_command kind    "scripts/install-tools.sh で導入してください。"
 require_command kubectl "scripts/install-tools.sh で導入してください。"
-require_command curl    "agent=codex の codex-catalog 生成で /api/show を叩くために必要。"
-require_command python3 "/api/show の JSON から model.json を組み立てるために必要。"
+# curl / python3 は Codex フローでのみ使う(後の agent別前提チェックで追加要求)
 
 # ----- agent別の前提 env -----
 CODEX_MODEL_DEFAULT="gemma4:31b-cloud"
@@ -99,6 +98,10 @@ if [[ "$AGENT" == "claude" ]]; then
        ./scripts/bootstrap.sh --step ${STEP} --agent claude"
     fi
 else
+    # codex フロー: curl と python3 は codex-catalog 生成で使う
+    require_command curl    "agent=codex の codex-catalog 生成で Ollama /api/show を叩くために必要。"
+    require_command python3 "/api/show の JSON から model.json を組み立てるために必要。"
+
     # codex: OLLAMA_BASE_URL を必須、未指定なら hostname -I から自動推測
     if [[ -z "${OLLAMA_BASE_URL:-}" ]]; then
         auto_ip="$(detect_lan_ip)"
@@ -142,11 +145,26 @@ if [[ "$STEP" == "1" ]]; then
 fi
 
 # ----- カスタムイメージ build & kind load -----
+# image タグは「マニフェストを唯一の真の情報源」とし、bootstrap が build/load する
+# タグと kubectl apply で動かす Deployment のタグが drift しないようマニフェストから
+# 抽出する(過去 PR で確立した方針)。
+#
+# 検索範囲は manifests/step${STEP} 全体。step1 では marimo image が base/ にあるので
+# overlay (codex|claude) だけ見ると拾えない、と base のみ見ると agent差分が拾えない。
+# 全体検索なら両方拾える(片方の agent overlay の image も拾うが、agent ごとに
+# image prefix を分けているので競合しない: codex-acp と acp-agent は別 prefix)。
+manifest_search_root="manifests/step${STEP}"
 case "$AGENT" in
-    claude) acp_image="marimo-envs/acp-agent:0.1.0";    acp_dir="images/acp-agent" ;;
-    codex)  acp_image="marimo-envs/codex-acp:0.1.0";    acp_dir="images/codex-acp" ;;
+    claude) acp_image_prefix="marimo-envs/acp-agent:"; acp_dir="images/acp-agent" ;;
+    codex)  acp_image_prefix="marimo-envs/codex-acp:"; acp_dir="images/codex-acp" ;;
 esac
-marimo_image="marimo-envs/marimo:0.1.0"
+marimo_image="$(extract_image "$manifest_search_root" "marimo-envs/marimo:")"
+acp_image="$(extract_image    "$manifest_search_root" "$acp_image_prefix")"
+[[ -n "$marimo_image" ]] || die "${manifest_search_root} から marimo image を抽出できませんでした。"
+[[ -n "$acp_image"    ]] || die "${manifest_search_root} から ${AGENT} image を抽出できませんでした。"
+echo "[=] images from ${manifest_search_root}:"
+echo "    marimo_image = ${marimo_image}"
+echo "    acp_image    = ${acp_image}"
 
 echo "[+] marimo拡張イメージをビルド: ${marimo_image}"
 docker build -t "$marimo_image" images/marimo

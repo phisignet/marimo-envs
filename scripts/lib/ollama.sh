@@ -9,7 +9,7 @@
 
 # fetch_ollama_model_info <ollama_base_url> <model_name> <output_path>:
 #   Ollama の /api/show を叩いて応答 JSON を <output_path> に保存。
-#   失敗時は curl の stderr と応答内容を表示して die。
+#   失敗時は curl の stderr と応答内容を STDERR に表示してから die で終了。
 #
 #   <ollama_base_url> は normalize_url 済(末尾 /v1)を前提。
 #   /api/show は /api/ 系(OpenAI互換ではない)なので /v1 を /api に置換する。
@@ -28,15 +28,15 @@ fetch_ollama_model_info() {
             -H 'Content-Type: application/json' \
             -d "$payload" \
             -o "$output_path" 2>"$error_log"; then
-        echo "ERROR: Ollama /api/show 呼び出し失敗。${api_show_url} で到達可能で" >&2
-        echo "       モデル '${model_name}' が pull 済みであることを確認してください。" >&2
+        # die する前に診断情報を STDERR に詳細出力(die は単一行に限定)。
         echo "  curl stderr:" >&2
         sed 's/^/    /' "$error_log" >&2
         if [[ -s "$output_path" ]]; then
             echo "  応答内容(先頭5行):" >&2
             head -5 "$output_path" | sed 's/^/    /' >&2
         fi
-        exit 1
+        die "Ollama /api/show 呼び出し失敗。${api_show_url} で到達可能で
+       モデル '${model_name}' が pull 済みであることを確認してください。"
     fi
 }
 
@@ -45,7 +45,8 @@ fetch_ollama_model_info() {
 #   model_catalog_json として使える `{"models": [...]}` を組み立て。
 #   フィールド構造は Codex 本体の buildCodexModelEntry に揃える。
 #
-#   出力先 <output_path> に書く(成功時のみ)。失敗時は Python が die する。
+#   原子性: 一時ファイルに書き出してから mv で <output_path> に置く。
+#   Python が途中で失敗しても <output_path> に空ファイルが残らない。
 #
 # 取得項目:
 #   - model_info.<family>.context_length(モデルのコンテキスト窓)
@@ -53,12 +54,13 @@ fetch_ollama_model_info() {
 # -cloud サフィックス付きモデルは truncation mode を tokens に。
 build_codex_model_catalog() {
     local show_json_path="$1" model_name="$2" output_path="$3"
+    local temp_path="${output_path}.tmp"
 
     # heredoc は <<'PYEOF' でクォートして Python ソースのシェル展開を抑止。
     # 引数(model 名、show 応答 path)は env 経由で渡す(" や \ が含まれても安全)。
-    SHOW_JSON_PATH="$show_json_path" \
-    CODEX_MODEL="$model_name" \
-    python3 <<'PYEOF' > "$output_path"
+    if ! SHOW_JSON_PATH="$show_json_path" \
+         CODEX_MODEL="$model_name" \
+         python3 <<'PYEOF' > "$temp_path"
 import json, os
 with open(os.environ["SHOW_JSON_PATH"]) as f:
     show = json.load(f)
@@ -97,4 +99,9 @@ entry = {
 }
 print(json.dumps({"models": [entry]}, indent=2))
 PYEOF
+    then
+        rm -f "$temp_path"
+        die "model.json の組み立てに失敗しました(Python の例外、上の stderr を確認)。"
+    fi
+    mv "$temp_path" "$output_path"
 }
