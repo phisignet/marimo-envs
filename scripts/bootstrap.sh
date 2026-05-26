@@ -141,12 +141,20 @@ else
 fi
 
 # ----- agent別 NodePort 競合の事前検知 -----
-# Step 1 で claude↔codex 切替時に、既存 Service marimo が古い nodePort を
-# 握っていると apply で衝突する。早期検知して teardown を促す。
-if [[ "$STEP" == "1" ]]; then
-    new_node_port=$([[ "$AGENT" == "claude" ]] && echo 30317 || echo 30321)
-    check_nodeport_conflict "$KUBE_CONTEXT" "$NAMESPACE" "$new_node_port" "marimo"
-fi
+# Step/agent 切替時に既存 Service が新構成と同じ nodePort を握っていると
+# `kubectl apply` が「port is already allocated」で落ちる。kubectl のエラーは
+# どの Service が握っているか分かりにくいので、early に check して
+# teardown を促す。
+#   Step 1: Service marimo が nodePort を直接握る(agent別 ACP port のみ)
+#   Step 4: nginx-gateway が複数 nodePort を集約(http 30080 + agent別 ACP port)
+acp_node_port=$([[ "$AGENT" == "claude" ]] && echo 30317 || echo 30321)
+case "$STEP" in
+    1) allowed_service_name="marimo";        node_ports=("$acp_node_port") ;;
+    4) allowed_service_name="nginx-gateway"; node_ports=(30080 "$acp_node_port") ;;
+esac
+for node_port in "${node_ports[@]}"; do
+    check_nodeport_conflict "$KUBE_CONTEXT" "$NAMESPACE" "$node_port" "$allowed_service_name"
+done
 
 # ----- カスタムイメージ build & kind load -----
 # image タグは「マニフェストを唯一の真の情報源」とし、bootstrap が build/load する
