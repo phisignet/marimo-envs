@@ -8,11 +8,12 @@
 #   normalize_url <url>     末尾スラッシュ除去 + /v1 サフィックス保証
 #   require_kind_cluster <name>   kind クラスタの存在チェック、無ければ die
 #   verify_port_mappings <cluster> <port...>  kind ノードに指定ポートが bind されているか
-#   check_nodeport_conflict <context> <namespace> <node_port> <allowed_service_name>
-#                           NodePort 衝突を事前検知(allowed_service_name と完全一致する
-#                           Service は除外)
-#   extract_image <manifest_glob> <name_prefix>
-#                           マニフェストから `image:` 行を抽出(image タグの単一情報源化)
+#   check_nodeport_conflict <context> <allowed_namespace> <node_port> <allowed_service_name>
+#                           NodePort 衝突を事前検知(全 namespace 走査、
+#                           allowed_namespace/allowed_service_name と完全一致するものは除外)
+#   extract_image <manifest_search_root> <image_name_prefix>
+#                           マニフェスト配下を再帰検索して `image:` 行を抽出
+#                           (image タグの単一情報源化)
 
 # ----- 基本ユーティリティ -----
 
@@ -115,22 +116,26 @@ verify_port_mappings() {
     fi
 }
 
-# check_nodeport_conflict <context> <namespace> <node_port> <allowed_service_name>:
-#   指定 NodePort を「allowed_service_name と完全一致する Service 以外」が握って
-#   いないか検証。衝突していれば die(teardown 案内付き)。
+# check_nodeport_conflict <context> <allowed_namespace> <node_port> <allowed_service_name>:
+#   指定 NodePort を「<allowed_namespace>/<allowed_service_name> と完全一致する
+#   Service 以外」が握っていないか検証。衝突していれば die(teardown 案内付き)。
+#
+#   NodePort はクラスタ全体で一意なため `kubectl get svc -A` で全 namespace を
+#   走査する。自分自身を除外するには namespace + name の組を完全一致で照合。
 #
 #   引数:
 #     context              kubectl --context に渡す値(例: kind-marimo)
-#     namespace            Service の namespace(例: marimo)
+#     allowed_namespace    自分自身の Service が居る namespace(例: marimo)
 #     node_port            検査対象 NodePort(例: 30317)
-#     allowed_service_name この名前と完全一致する Service なら衝突扱いしない
-#                          (自分自身を除外する用、glob/正規表現ではない)
+#     allowed_service_name 自分自身の Service 名(例: marimo)
+#                          allowed_namespace/allowed_service_name の組と完全一致する
+#                          ものを除外(glob/正規表現ではない)
 check_nodeport_conflict() {
-    local context="$1" namespace="$2" node_port="$3" allowed_service_name="$4"
+    local context="$1" allowed_namespace="$2" node_port="$3" allowed_service_name="$4"
     local conflicting
-    conflicting=$({ kubectl --context "$context" -n "$namespace" get svc \
-        -o go-template='{{range .items}}{{$name := .metadata.name}}{{range .spec.ports}}{{if eq .nodePort '"${node_port}"'}}{{$name}}{{"\n"}}{{end}}{{end}}{{end}}' \
-        2>/dev/null | grep -v "^${allowed_service_name}\$" | grep -v '^$' | head -1; } || true)
+    conflicting=$({ kubectl --context "$context" get svc -A \
+        -o go-template='{{range .items}}{{$ns := .metadata.namespace}}{{$name := .metadata.name}}{{range .spec.ports}}{{if eq .nodePort '"${node_port}"'}}{{$ns}}/{{$name}}{{"\n"}}{{end}}{{end}}{{end}}' \
+        2>/dev/null | grep -v "^${allowed_namespace}/${allowed_service_name}\$" | grep -v '^$' | head -1; } || true)
     if [[ -n "$conflicting" ]]; then
         die "NodePort ${node_port} が既に Service '${conflicting}' に割り当てられています。
        Step/agent 切替時はクラスタ再作成が必要です。先に teardown してください:
