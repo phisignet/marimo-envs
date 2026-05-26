@@ -61,10 +61,11 @@ marimo のブラウザJSは ACP の WebSocket URL を `ws(s)://${window.location
 ## 0. 前提
 
 - Linux + Docker(ログインユーザーが `docker` グループに所属)
-- `curl` と `python3`(`bootstrap.sh` が Codex 用 catalog 生成に使う、ほとんどの Linux に標準)
 - Agent 別:
   - **Claude**: `claude setup-token` で取得した `CLAUDE_CODE_OAUTH_TOKEN`(1年有効)
-  - **Codex**: Ollama が `OLLAMA_HOST=0.0.0.0:11434` で起動済、使うモデルが pull 済み
+  - **Codex**: Ollama が `OLLAMA_HOST=0.0.0.0:11434` で起動済、使うモデルが pull 済み。
+    加えて `curl` と `python3`(`bootstrap.sh` が Ollama `/api/show` を叩いて
+    Codex 用 catalog を生成するのに使う。ほとんどの Linux に標準)
 - LAN で他の PC からアクセスしたいなら `hostname -I` で取れる IP を確認
 
 ## 1. ツール導入(初回のみ)
@@ -72,7 +73,7 @@ marimo のブラウザJSは ACP の WebSocket URL を `ws(s)://${window.location
 ```bash
 ./scripts/install-tools.sh
 ```
-`kind` と `kubectl` を `~/.local/bin` に導入する(sudo 不要)。`curl` と `python3` は OS パッケージで別途揃えること。
+`kind` と `kubectl` を `~/.local/bin` に導入する(sudo 不要)。`--agent codex` を使う場合は別途 `curl` と `python3` を OS パッケージで揃えること(Claude のみなら不要)。
 
 ## 2. Ollama 起動(Codex を使う場合のみ)
 
