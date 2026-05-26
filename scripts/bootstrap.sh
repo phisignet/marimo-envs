@@ -192,7 +192,11 @@ if [[ "$AGENT" == "claude" ]]; then
     # コマンドラインにトークンを載せないようにする。
     token_file="$(mktemp)"
     chmod 600 "$token_file"
-    # trap で確実に削除(失敗時も含む)。ollama 側の trap と競合しないようキー名で分ける。
+    # EXIT trap を一時的に上書きして、途中で失敗した場合も $token_file を確実に
+    # 削除する。Bash の trap はシグナルごとに1つのハンドラしか持てないので、
+    # この区間は EXIT trap が rm 専用に置き換わる。区間終了時に `trap - EXIT` で
+    # デフォルト(なし)に戻す。Codex 側の trap(catalog_dir 削除)は別のフロー
+    # なのでこの区間とは重ならない。
     trap 'rm -f "$token_file"' EXIT
     printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" > "$token_file"
     kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create secret generic claude-code-token \

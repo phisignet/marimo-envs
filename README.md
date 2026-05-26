@@ -151,7 +151,13 @@ ACPで接続したエージェントは、以下を使ってノートブック�
 - `get_marimo_rules` / `lint_notebook`
 - プロンプト: `active_notebooks`, `errors_summary`
 
-> marimo の MCP サーバーは `http://localhost:2718/mcp/server` で公開。Claude Code 構成は起動時に自動登録、Codex 構成は現状未対応。
+> marimo の MCP サーバーは marimo 自身の HTTP ポート上の `/mcp/server` に公開される。アクセス経路は構成で変わる:
+>
+> - **Step 1**: `http://<LAN_IP>:2718/mcp/server`(NodePort 経由)
+> - **Step 4**: `http://nb<N>.<LAN_IP>.nip.io/mcp/server`(nginx 経由でテナント別 Pod に振り分け)
+> - **Pod 内 ACPサイドカーからの内部呼び出し**: `http://localhost:2718/mcp/server`(Step 1/4 共通、コンテナ間 localhost)
+>
+> Claude Code 構成は起動時に自動登録、Codex 構成は現状未対応。
 
 ## Codex + Ollama 特有: 警告抑制(model_catalog_json)
 
