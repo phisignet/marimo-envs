@@ -149,7 +149,7 @@ fi
 #   Step 4: nginx-gateway が複数 nodePort を集約(http 30080 + agent別 ACP port)
 acp_node_port=$([[ "$AGENT" == "claude" ]] && echo 30317 || echo 30321)
 case "$STEP" in
-    1) allowed_service_name="marimo";        node_ports=("$acp_node_port") ;;
+    1) allowed_service_name="marimo";        node_ports=(30718 "$acp_node_port") ;;
     4) allowed_service_name="nginx-gateway"; node_ports=(30080 "$acp_node_port") ;;
 esac
 for node_port in "${node_ports[@]}"; do
