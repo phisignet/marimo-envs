@@ -115,7 +115,7 @@ marimo UI を開いたら:
 1. **Settings → Lab → "agents" を有効化**(初回のみ。ブラウザ側設定)
 2. 左サイドバーのエージェントアイコン
 3. **Claude / Codex** を選択(`--agent` で起動したものを選ぶ)
-4. ブラウザは ws://<同じホスト>:<port> に自動接続
+4. ブラウザは `ws://<同じホスト>:<port>/message` に自動接続(`<port>` は claude=3017 / codex=3021)
 
 ---
 

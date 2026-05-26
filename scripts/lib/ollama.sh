@@ -28,7 +28,9 @@ fetch_ollama_model_info() {
             -H 'Content-Type: application/json' \
             -d "$payload" \
             -o "$output_path" 2>"$error_log"; then
-        # die する前に診断情報を STDERR に詳細出力(die は単一行に限定)。
+        # 診断情報(curl stderr / 応答内容のサンプル)を STDERR に先出し、
+        # 最後に die で「何が起きたか / 何を確認すべきか」を出して終了する。
+        # die のメッセージ自体は複数行可。
         echo "  curl stderr:" >&2
         sed 's/^/    /' "$error_log" >&2
         if [[ -s "$output_path" ]]; then

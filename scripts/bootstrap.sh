@@ -56,8 +56,12 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --step)  STEP="${2:-}"; shift 2 ;;
-        --agent) AGENT="${2:-}"; shift 2 ;;
+        --step)
+            [[ $# -ge 2 ]] || { usage >&2; die "--step に値が必要です(1 または 4)。"; }
+            STEP="$2"; shift 2 ;;
+        --agent)
+            [[ $# -ge 2 ]] || { usage >&2; die "--agent に値が必要です(claude または codex)。"; }
+            AGENT="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "Unknown argument: $1" ;;
     esac
@@ -183,9 +187,19 @@ kubectl --context "$KUBE_CONTEXT" apply -f manifests/namespace.yaml
 # ----- agent別の動的リソース(Secret / ConfigMap)作成 -----
 if [[ "$AGENT" == "claude" ]]; then
     echo "[+] Claude OAuth トークン Secret を作成/更新..."
+    # --from-literal=token=$TOKEN だとプロセス引数として残り、同一ホストの他ユーザーが
+    # `ps` でトークンを読めてしまう。一時ファイル(mode 600)+ --from-file 経由で
+    # コマンドラインにトークンを載せないようにする。
+    token_file="$(mktemp)"
+    chmod 600 "$token_file"
+    # trap で確実に削除(失敗時も含む)。ollama 側の trap と競合しないようキー名で分ける。
+    trap 'rm -f "$token_file"' EXIT
+    printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" > "$token_file"
     kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create secret generic claude-code-token \
-        --from-literal=token="$CLAUDE_CODE_OAUTH_TOKEN" \
+        --from-file=token="$token_file" \
         --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f -
+    rm -f "$token_file"
+    trap - EXIT
 else
     echo "[+] Codex 接続 ConfigMap (codex-config) を作成/更新..."
     kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create configmap codex-config \
