@@ -137,10 +137,16 @@ check_nodeport_conflict() {
         -o go-template='{{range .items}}{{$ns := .metadata.namespace}}{{$name := .metadata.name}}{{range .spec.ports}}{{if eq .nodePort '"${node_port}"'}}{{$ns}}/{{$name}}{{"\n"}}{{end}}{{end}}{{end}}' \
         2>/dev/null | grep -v "^${allowed_namespace}/${allowed_service_name}\$" | grep -v '^$' | head -1; } || true)
     if [[ -n "$conflicting" ]]; then
+        # ${conflicting} は '<namespace>/<name>' 形式。kubectl delete に渡せるよう
+        # ヒント文で分解例を示す。
+        local conflicting_ns="${conflicting%%/*}"
+        local conflicting_name="${conflicting##*/}"
         die "NodePort ${node_port} が既に Service '${conflicting}' に割り当てられています。
-       Step/agent 切替時はクラスタ再作成が必要です。先に teardown してください:
+       競合 Service を削除するか、Step/agent 切替の場合はクラスタを teardown してください:
 
-           ./scripts/teardown.sh"
+           kubectl --context ${context} -n ${conflicting_ns} delete svc ${conflicting_name}
+                                                                  # 競合 Service のみ削除
+           ./scripts/teardown.sh                                   # クラスタごと削除"
     fi
 }
 
