@@ -2,8 +2,18 @@
 #
 # nginx 前段が :80(marimo UI) と :3017 or :3021(ACP)を bind する。
 # Claude と Codex のどちらでも切替できるよう、両 ACP ポートを bind しておく
-# (Pod 側は選んだ agent のポートしか listen しないので余分に open しても害なし)。
-# これにより bootstrap.sh の --agent 切替時に kind cluster 自体は再作成不要。
+# (Pod 側は選んだ agent のポートしか listen しないので余分に open しても通信上の
+# 害はない)。これにより bootstrap.sh の --agent 切替時に kind cluster 自体は
+# 再作成不要。
+#
+# ⚠️ ただし `extraPortMappings` の hostPort が既にホスト側で他プロセスに
+# 使われている場合、未使用予定の側であっても kind create cluster は
+# 「port is already allocated」で失敗する。:80 + 両 ACP ポート(3017/3021)が
+# 空いていることが前提。回避策:
+#   - 使わない側の agent のポートを bind する `- {containerPort: 3017/3021, ...}`
+#     行を削除して使う(片 agent 固定運用になり、もう片方への切替時は
+#     teardown → 再作成が必要)
+#   - もしくはホスト側の競合プロセスを停止 / ポート変更する
 #
 # Step 1 用設定(kind/cluster-step1.yaml)と分けている理由:
 # - Step 4 はホスト :80 を bind するため、Step 1 だけ使いたいユーザーが
