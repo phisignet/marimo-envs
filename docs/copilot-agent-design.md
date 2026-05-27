@@ -19,7 +19,7 @@
 本リポジトリは Step × Agent の 4 組合せ(Step 1/4 × claude/codex)をサポート済([README.md](../README.md))。会社環境では Codex + Ollama 構成での運用を目指すが、以下の制約に直面している:
 
 - **GPU vRAM 制約**: 会社 Ollama サーバーの GPU vRAM が小さく、`gemma4:e4b` 程度のモデルしか動かせない
-- **小型モデルの tool calling 性能不足**: `gemma4:e4b` は `/v1/responses` で `tool_calls` を返すが、Codex の長大なシステムプロンプト下では「ファイル一覧」のような単純依頼にも tool を呼ばず質問返ししてくる instruction following 限界がある(詳細: [[codex-small-model-tool-issue]] memory)
+- **小型モデルの tool calling 性能不足**: `gemma4:e4b` は `/v1/responses` で `tool_calls` を返すが、Codex の長大なシステムプロンプト下では「ファイル一覧」のような単純依頼にも tool を呼ばず質問返ししてくる instruction following 限界がある(curl 経由でツール定義 1 個 + 1 行プロンプトの単純コンテキストでは `tool_calls` が正しく返ることを確認済、つまり Codex 経路のコンテキスト重さに e4b の attention が耐えきれていない)
 - **クラウド系小型モデルでも改善限定**: `gemma3n` 系は tool calling 学習が薄く Codex 用途に向かない
 
 ### 1.2 Copilot CLI を選ぶ理由
@@ -65,7 +65,7 @@ marimo edit --no-token --host 0.0.0.0 --port 2718
 # 別 PC ブラウザから http://adams:2718/ → Agents パネルで Cursor 選択 → 接続成功
 ```
 
-`session/new` まで通って、Copilot がユーザーメッセージに応答することを確認(詳細: [[copilot-cli-acp-integration]] memory)。
+`session/new` まで通って、Copilot がユーザーメッセージに応答することを確認。adams ヘッドレス + zeros ブラウザの構成では、別途ホスト OS のファイアウォール開放(`ufw allow 2718,3025/tcp`)が必要。kind 経由なら Docker daemon が iptables を動的挿入してくれるため透過。
 
 ## 3. アーキテクチャ
 
