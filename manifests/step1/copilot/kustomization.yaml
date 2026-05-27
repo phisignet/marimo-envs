@@ -1,0 +1,23 @@
+# Step 1 / copilot overlay: base に copilot-acp サイドカー + Service を足す。
+#
+# 動的生成リソース(bootstrap.sh が apply 前に kubectl create で組み立てる):
+#   - Secret copilot-token (COPILOT_GITHUB_TOKEN を平文で格納)
+# overlay 自体には含めないが、Deployment が secretKeyRef で参照する。
+#
+# marimo の AGENT_CONFIG では port 3025 は Cursor 用に予約されているが、
+# 同 ACP プロトコルなので「marimo UI で Cursor を選ぶ → 中身は Copilot」という
+# 流用が成立する(公式チュートリアル: OpenCode を Claude port 3017 に乗せる事例と同型)。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: marimo
+
+resources:
+  - ../base
+  - service.yaml
+
+patches:
+  - path: acp-patch.yaml
+    target:
+      kind: Deployment
+      name: marimo

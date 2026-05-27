@@ -1,6 +1,6 @@
 # marimo + AI Agent on Kubernetes
 
-marimo の **エージェント機能(Claude Code または Codex CLI + Ollama)** を、Kubernetes (kind) 上で動かす分析環境。
+marimo の **エージェント機能(Claude Code / Codex CLI + Ollama / GitHub Copilot CLI)** を、Kubernetes (kind) 上で動かす分析環境。
 
 | Step | 想定 | 説明 |
 |---|---|---|
@@ -11,8 +11,9 @@ marimo の **エージェント機能(Claude Code または Codex CLI + Ollama)*
 |---|---|---|---|
 | **Claude Code** | Anthropic (Pro/Max サブスク) | `CLAUDE_CODE_OAUTH_TOKEN`(`claude setup-token`)必須 | 3017 |
 | **Codex + Ollama** | 社内/家庭内 Ollama(OpenAI互換) | **不要**(認証情報なし、社内コンプラ対応) | 3021 |
+| **GitHub Copilot CLI** | GitHub(Copilot Pro/Business/Enterprise) | `COPILOT_GITHUB_TOKEN`(GitHub PAT、Copilot 利用権限あり) | 3025(Cursor 枠を流用) |
 
-**Step × Agent の 4 組合せすべてが `scripts/bootstrap.sh` のフラグで切替可能**。
+**Step × Agent の 6 組合せすべてが `scripts/bootstrap.sh` のフラグで切替可能**。Copilot CLI は marimo の AGENT_CONFIG で Cursor 用 port 3025 を流用するため、marimo UI 上は「**Cursor**」と表示されるが中身は Copilot CLI(設計詳細: [docs/copilot-agent-design.md](docs/copilot-agent-design.md))。
 
 ---
 
@@ -26,12 +27,20 @@ marimo の **エージェント機能(Claude Code または Codex CLI + Ollama)*
 export CLAUDE_CODE_OAUTH_TOKEN='<paste-token-here>'
 ./scripts/bootstrap.sh --step 1 --agent claude
 
+# 1人で試用 + Copilot CLI(GitHub PAT)
+export COPILOT_GITHUB_TOKEN='<paste-pat-here>'
+./scripts/bootstrap.sh --step 1 --agent copilot
+
 # 複数人 PoC + Codex+Ollama
 ./scripts/bootstrap.sh --step 4 --agent codex
 
 # 複数人 PoC + Claude Code
 export CLAUDE_CODE_OAUTH_TOKEN='<paste-token-here>'
 ./scripts/bootstrap.sh --step 4 --agent claude
+
+# 複数人 PoC + Copilot CLI
+export COPILOT_GITHUB_TOKEN='<paste-pat-here>'
+./scripts/bootstrap.sh --step 4 --agent copilot
 
 # 後片付け
 ./scripts/teardown.sh
@@ -49,12 +58,13 @@ marimo のブラウザJSは ACP の WebSocket URL を `ws(s)://${window.location
 
 - Claude Code = **3017**
 - Codex CLI = **3021**
-- Gemini = 3019, OpenCode = 3023, Cursor = 3025(未対応)
+- Cursor = **3025**(本リポジトリでは Copilot CLI を流用)
+- Gemini = 3019, OpenCode = 3023(未対応)
 
 そのため marimo (HTTP 2718 or 80) と ACP の port を「**同じホスト名/IP に揃えて**」公開する必要がある。これが本リポジトリ全体の最重要制約。
 
-- Step 1: 同一 LAN_IP 上に :2718 と :3017/:3021 を NodePort で並べる
-- Step 4: nginx が :80 と :3017/:3021 を Listen し、Hostヘッダで Pod を振り分け(`nb1.<IP>.nip.io` / `nb2.<IP>.nip.io`)
+- Step 1: 同一 LAN_IP 上に :2718 と :3017/:3021/:3025 を NodePort で並べる
+- Step 4: nginx が :80 と :3017/:3021/:3025 を Listen し、Hostヘッダで Pod を振り分け(`nb1.<IP>.nip.io` / `nb2.<IP>.nip.io`)
 
 ---
 
@@ -66,6 +76,10 @@ marimo のブラウザJSは ACP の WebSocket URL を `ws(s)://${window.location
   - **Codex**: Ollama が `OLLAMA_HOST=0.0.0.0:11434` で起動済、使うモデルが pull 済み。
     加えて `curl` と `python3`(`bootstrap.sh` が Ollama `/api/show` を叩いて
     Codex 用 catalog を生成するのに使う。ほとんどの Linux に標準)
+  - **Copilot**: Copilot Pro/Business/Enterprise サブスクに紐づいた GitHub アカウントで
+    [PAT を発行](https://github.com/settings/tokens)し、Copilot 利用権限を含む
+    スコープ(Fine-grained なら "Copilot Editor Requests" 系を Read)で
+    `COPILOT_GITHUB_TOKEN` に設定
 - LAN で他の PC からアクセスしたいなら `hostname -I` で取れる IP を確認
 
 ## 1. ツール導入(初回のみ)
@@ -124,21 +138,23 @@ marimo UI を開いたら:
 
 | パス | 役割 |
 |---|---|
-| `kind/cluster-step1.yaml` | Step 1 用 kind 設定(2718 + 3017 + 3021 を LAN bind) |
-| `kind/cluster-step4.yaml` | Step 4 用 kind 設定(80 + 3017 + 3021 を LAN bind) |
+| `kind/cluster-step1.yaml` | Step 1 用 kind 設定(2718 + 3017 + 3021 + 3025 を LAN bind) |
+| `kind/cluster-step4.yaml` | Step 4 用 kind 設定(80 + 3017 + 3021 + 3025 を LAN bind) |
 | `images/marimo/Dockerfile` | marimo 公式 + `marimo[mcp]` extras + `external_agents` 初期有効化 |
 | `images/acp-agent/` | Claude Code ACP サイドカー(`@anthropic-ai/claude-code` + `@zed-industries/claude-code-acp`) |
 | `images/codex-acp/` | Codex ACP サイドカー(`@openai/codex` + `@zed-industries/codex-acp`) |
+| `images/copilot-acp/` | Copilot CLI ACP サイドカー(`@github/copilot`) |
 | `manifests/namespace.yaml` | 専用 namespace `marimo`(全構成共通) |
 | `manifests/step1/base/` | Step 1 共通(marimo Deployment + PVC) |
-| `manifests/step1/{claude,codex}/` | Step 1 の agent 別 overlay(Kustomize、サイドカー patch + Service) |
-| `manifests/step4/{claude,codex}/` | Step 4 の agent 別フルマニフェスト(nginx + nb1/nb2 テナント) |
+| `manifests/step1/{claude,codex,copilot}/` | Step 1 の agent 別 overlay(Kustomize、サイドカー patch + Service) |
+| `manifests/step4/{claude,codex,copilot}/` | Step 4 の agent 別フルマニフェスト(nginx + nb1/nb2 テナント) |
 | `scripts/bootstrap.sh` | 統合 CLI(`--step --agent`) |
 | `scripts/teardown.sh` | クラスタ削除(PVC含む) |
 | `scripts/install-tools.sh` | kind/kubectl の sudo なしインストール |
-| `scripts/lib/common.sh` | 共通関数(LAN_IP 自動推測、cluster 検証、die 等) |
+| `scripts/lib/common.sh` | 共通関数(LAN_IP 自動推測、cluster 検証、die、Secret 作成等) |
 | `scripts/lib/ollama.sh` | Ollama `/api/show` → Codex `model.json` 生成 |
 | `docs/SETUP.md` | 詳細手順とトラブルシューティング |
+| `docs/copilot-agent-design.md` | Copilot CLI 統合の設計ドキュメント |
 
 ## エージェントが使えるツール
 

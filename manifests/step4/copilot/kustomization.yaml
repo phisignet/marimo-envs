@@ -1,0 +1,15 @@
+# Step 4 / copilot overlay: 同一サーバーで 2 テナント(nb1, nb2)を並走させる
+# 複数人 PoC 構成。ACPエージェントは Copilot CLI(copilot-acp, port 3025)。
+#
+# 動的生成リソース(bootstrap.sh が apply 前に kubectl create で組み立てる):
+#   - Secret copilot-token (COPILOT_GITHUB_TOKEN を平文で格納、nb1/nb2 で共有)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: marimo
+
+resources:
+  - nginx-configmap.yaml
+  - nginx-deployment.yaml
+  - notebook-nb1.yaml
+  - notebook-nb2.yaml
