@@ -1,10 +1,16 @@
 # Copilot Agent 統合 設計ドキュメント
 
-> **ステータス**: design draft(2026-05-27) — レビュー後に実装フェーズへ
+> **ステータス**: 実装済(2026-05-27 設計 → 2026-05-28 実装完了)
 >
 > **担当ブランチ**: `feat/copilot-agent`
 >
-> **対象 PR**: 未作成(本ドキュメントが draft の最初のコミット)
+> **対象 PR**: [#6](https://github.com/phisignet/marimo-envs/pull/6)(レビュー対応中)
+>
+> 本ドキュメントは設計時点(2026-05-27)の意図と決定事項を保存する記録物。
+> 実装の最終形は同 PR のコード(`images/copilot-acp/` / `manifests/step{1,4}/copilot/` /
+> `scripts/bootstrap.sh` 等)が source of truth であり、本ドキュメントの 5 章
+> 「詳細仕様」のコードスニペットは**設計時点の参考**として残している
+> (細部は実装側で発展済 — 例: tini 経由起動、`USER node`、env unset 戦術等)。
 
 ## 1. 背景と動機
 
@@ -172,27 +178,31 @@ docs/SETUP.md                        [修正]
 
 ### 5.1 `images/copilot-acp/Dockerfile`
 
+**(設計時点のスケッチ。実装の最終形は [`images/copilot-acp/Dockerfile`](../images/copilot-acp/Dockerfile) を参照)**
+
+実装時に判明・調整した点:
+- ベースは `node:22-slim`(設計時 `node:20-bookworm-slim` から変更、既存 acp-agent と揃える)
+- 非 root ユーザーは `node`(既存 node イメージに含まれる uid 1000)を流用、`useradd` 不要
+- PID 1 シグナル処理に `tini` を導入(他サイドカーと統一)
+- `ca-certificates` を明示インストール(HTTPS 検証用、Copilot API が GitHub HTTPS)
+- バージョン pin は `@github/copilot@1.0.54` + `stdio-to-ws@0.2.0`(public preview のため)
+
+設計時のスケッチ(参考、実装と完全一致するものではない):
+
 ```dockerfile
-FROM node:20-bookworm-slim
-
-# Copilot CLI 公式 npm パッケージ(@github/copilot)と stdio-to-ws を導入
-# バージョンは pin する(再現性、Copilot CLI は public preview で破壊的変更可能性)
-ARG COPILOT_CLI_VERSION=1.0.54
-ARG STDIO_TO_WS_VERSION=0.2.0
-
-RUN npm install -g --omit=dev \
-    "@github/copilot@${COPILOT_CLI_VERSION}" \
-    "stdio-to-ws@${STDIO_TO_WS_VERSION}"
-
-# 既存 codex-acp / acp-agent と同じく非 root ユーザー(appuser)で動かす
-RUN useradd -m -u 1000 -s /bin/bash appuser
-USER appuser
+# このスニペットは設計時点の意図を残すための参考。
+# 実装最終形は images/copilot-acp/Dockerfile を参照のこと。
+FROM node:22-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/*
+RUN npm install -g stdio-to-ws@0.2.0 @github/copilot@1.0.54
+COPY --chown=node:node entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+USER node
 WORKDIR /workspace
-
-COPY --chown=appuser:appuser entrypoint.sh /usr/local/bin/entrypoint.sh
-
 EXPOSE 3025
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["tini", "--", "/usr/local/bin/entrypoint.sh"]
 ```
 
 ### 5.2 `images/copilot-acp/entrypoint.sh`
