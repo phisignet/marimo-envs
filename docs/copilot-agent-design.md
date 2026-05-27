@@ -52,7 +52,7 @@ claude=3017, gemini=3019, codex=3021, opencode=3023, cursor=3025
 adams ヘッドレス上で動作確認済:
 
 ```bash
-export COPILOT_GITHUB_TOKEN='ghp_xxx'  # Copilot 利用権限のある PAT
+export COPILOT_GITHUB_TOKEN='github_pat_xxx'  # Fine-grained PAT(Copilot Requests 権限)
 npx -y stdio-to-ws "copilot --acp --stdio" --port 3025
 # 別ターミナル
 marimo edit --no-token --host 0.0.0.0 --port 2718
@@ -108,9 +108,10 @@ kind cluster:
 ```
 GitHub Copilot Pro/Business/Enterprise アカウント
     ↓ (Web UI で発行)
-GitHub PAT (Personal Access Token)
-    - Fine-grained: Copilot 関連 Permission を Read 付与
-    - Classic: Copilot 利用権限を含むスコープ
+GitHub Fine-grained PAT (Personal Access Token)
+    - Resource owner: 個人アカウント(組織だと Copilot Requests permission が出ない)
+    - Account → Copilot Requests を Read 付与
+    - ⚠️ Classic PAT (ghp_*) は Copilot CLI で非対応、必ず Fine-grained
     ↓ (kubectl create secret --from-file=token=...)
 Kubernetes Secret: copilot-token
     ↓ (Pod の env で参照)
@@ -237,9 +238,11 @@ elif [[ "$AGENT" == "copilot" ]]; then
     if [[ -z "${COPILOT_GITHUB_TOKEN:-}" ]]; then
         die "環境変数 COPILOT_GITHUB_TOKEN が未設定です。
 
-  1) https://github.com/settings/tokens で PAT を発行(Copilot 利用権限を含むスコープ)
+  1) https://github.com/settings/personal-access-tokens/new で Fine-grained PAT を発行
+     Resource owner: 個人アカウント / Account → Copilot Requests を Read
+     (Classic PAT は Copilot CLI で非対応)
   2) この端末で:
-       export COPILOT_GITHUB_TOKEN='ghp_xxx...'
+       export COPILOT_GITHUB_TOKEN='github_pat_xxx...'
        ./scripts/bootstrap.sh --step ${STEP} --agent copilot"
     fi
 fi
@@ -325,7 +328,7 @@ esac
 ## 9. レビュー観点(レビュアー向け)
 
 - [ ] 戦術(Cursor port 流用)が marimo の今後の AGENT_CONFIG 変更で壊れる可能性をどう見るか
-- [ ] PAT のスコープ要件(Fine-grained vs Classic、最小権限)
+- [ ] PAT のスコープ要件(Fine-grained PAT に Copilot Requests 権限、Resource owner = 個人アカウント)
 - [ ] entrypoint.sh の `unset GH_TOKEN GITHUB_TOKEN` を Pod 内でやって問題ないか(他のツールが必要としていないか)
 - [ ] イメージ build 戦略(buildx / multi-arch 必要か、現状 amd64 のみで十分か)
 - [ ] ファイル構成が既存の claude/codex 構成と平仄揃っているか

@@ -77,9 +77,10 @@ marimo のブラウザJSは ACP の WebSocket URL を `ws(s)://${window.location
     加えて `curl` と `python3`(`bootstrap.sh` が Ollama `/api/show` を叩いて
     Codex 用 catalog を生成するのに使う。ほとんどの Linux に標準)
   - **Copilot**: Copilot Pro/Business/Enterprise サブスクに紐づいた GitHub アカウントで
-    [PAT を発行](https://github.com/settings/tokens)し、Copilot 利用権限を含む
-    スコープ(Fine-grained なら "Copilot Editor Requests" 系を Read)で
-    `COPILOT_GITHUB_TOKEN` に設定
+    [Fine-grained PAT を発行](https://github.com/settings/personal-access-tokens/new)
+    (**Resource owner = 個人アカウント**、Account → **Copilot Requests** を Read)
+    し、`COPILOT_GITHUB_TOKEN` に設定。`github_pat_*` 形式のトークン
+    (Classic PAT `ghp_*` は Copilot CLI で**非対応**)
 - LAN で他の PC からアクセスしたいなら `hostname -I` で取れる IP を確認
 
 ## 1. ツール導入(初回のみ)

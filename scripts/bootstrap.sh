@@ -115,12 +115,13 @@ case "$AGENT" in
         if [[ -z "${COPILOT_GITHUB_TOKEN:-}" ]]; then
             die "環境変数 COPILOT_GITHUB_TOKEN が未設定です。
 
-  1) https://github.com/settings/tokens で Copilot 利用権限を含む PAT を発行
-     (Fine-grained なら 'Copilot Editor Requests' 系の Permission を Read 付与、
-      Classic なら Copilot 利用権限を含むスコープを選択)
+  1) https://github.com/settings/personal-access-tokens/new で Fine-grained PAT を発行
+     - Resource owner: 個人アカウント(組織だと Copilot Requests permission が出ない)
+     - Permissions → Account → 'Copilot Requests' を Read 付与
+     ⚠️ Classic PAT (ghp_*) は Copilot CLI で非対応、必ず Fine-grained を発行
 
   2) この端末で:
-       export COPILOT_GITHUB_TOKEN='<paste-pat-here>'
+       export COPILOT_GITHUB_TOKEN='github_pat_xxx...'
        ./scripts/bootstrap.sh --step ${STEP} --agent copilot"
         fi
         ;;
