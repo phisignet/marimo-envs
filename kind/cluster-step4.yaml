@@ -1,17 +1,17 @@
-# kind クラスタ設定 — Step 4(複数人 PoC、両 agent 対応)。
+# kind クラスタ設定 — Step 4(複数人 PoC、全 agent 対応)。
 #
-# nginx 前段が :80(marimo UI) と :3017 or :3021(ACP)を bind する。
-# Claude と Codex のどちらでも切替できるよう、両 ACP ポートを bind しておく
-# (Pod 側は選んだ agent のポートしか listen しないので余分に open しても通信上の
-# 害はない)。これにより bootstrap.sh の --agent 切替時に kind cluster 自体は
-# 再作成不要。
+# nginx 前段が :80(marimo UI) と :3017 or :3021 or :3025(ACP)を bind する。
+# Claude / Codex / Copilot のどれでも切替できるよう、3 ACP ポート全部を bind
+# しておく(Pod 側は選んだ agent のポートしか listen しないので余分に open
+# しても通信上の害はない)。これにより bootstrap.sh の --agent 切替時に
+# kind cluster 自体は再作成不要。
 #
 # ⚠️ ただし `extraPortMappings` の hostPort が既にホスト側で他プロセスに
 # 使われている場合、未使用予定の側であっても kind create cluster は
-# 「port is already allocated」で失敗する。:80 + 両 ACP ポート(3017/3021)が
-# 空いていることが前提。回避策:
-#   - 使わない側の agent のポートを bind する `- {containerPort: 3017/3021, ...}`
-#     行を削除して使う(片 agent 固定運用になり、もう片方への切替時は
+# 「port is already allocated」で失敗する。:80 + 3 ACP ポート(3017/3021/3025)
+# が空いていることが前提。回避策:
+#   - 使わない agent のポートを bind する extraPortMappings エントリを
+#     削除して使う(限定 agent 運用になり、他 agent への切替時は
 #     teardown → 再作成が必要)
 #   - もしくはホスト側の競合プロセスを停止 / ポート変更する
 #
@@ -45,5 +45,11 @@ nodes:
       # ACPエージェント(Codex CLI) - ホスト 3021 → ノード(NodePort) 30321
       - containerPort: 30321
         hostPort: 3021
+        listenAddress: "0.0.0.0"
+        protocol: TCP
+
+      # ACPエージェント(Copilot CLI、Cursor port 3025 を流用) - ホスト 3025 → ノード 30325
+      - containerPort: 30325
+        hostPort: 3025
         listenAddress: "0.0.0.0"
         protocol: TCP

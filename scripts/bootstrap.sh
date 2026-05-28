@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
-# 統合 bootstrap — Step (1/4) と Agent (claude/codex) の4組合せをサポートする。
+# 統合 bootstrap — Step (1/4) と Agent (claude/codex/copilot) の6組合せをサポートする。
 #
 # 使用例:
 #   ./scripts/bootstrap.sh --step 1 --agent codex
 #   ./scripts/bootstrap.sh --step 1 --agent claude
+#   ./scripts/bootstrap.sh --step 1 --agent copilot
 #   ./scripts/bootstrap.sh --step 4 --agent codex
 #   ./scripts/bootstrap.sh --step 4 --agent claude
+#   ./scripts/bootstrap.sh --step 4 --agent copilot
 #
 # Step と Agent の意味:
-#   Step 1  1Pod = marimo + ACPサイドカー 1セット(1人試用)
-#   Step 4  nginx + 2テナント Pod(複数人 PoC、Hostヘッダ振り分け)
-#   claude  ACP = Claude Code(Pro/Max サブスクトークン必須、port 3017)
-#   codex   ACP = Codex CLI + Ollama(認証不要、port 3021)
+#   Step 1   1Pod = marimo + ACPサイドカー 1セット(1人試用)
+#   Step 4   nginx + 2テナント Pod(複数人 PoC、Hostヘッダ振り分け)
+#   claude   ACP = Claude Code(Pro/Max サブスクトークン必須、port 3017)
+#   codex    ACP = Codex CLI + Ollama(認証不要、port 3021)
+#   copilot  ACP = GitHub Copilot CLI(GitHub PAT 必須、port 3025=Cursor 枠を流用)
 #
 # 必要な前提:
-#   claude → 環境変数 CLAUDE_CODE_OAUTH_TOKEN(`claude setup-token` で取得)
-#   codex  → Ollama が `OLLAMA_HOST=0.0.0.0:11434` で listen、モデル pull 済み
-#            (URL は OLLAMA_BASE_URL env で指定、未指定なら hostname -I から自動推測)
+#   claude  → 環境変数 CLAUDE_CODE_OAUTH_TOKEN(`claude setup-token` で取得)
+#   codex   → Ollama が `OLLAMA_HOST=0.0.0.0:11434` で listen、モデル pull 済み
+#             (URL は OLLAMA_BASE_URL env で指定、未指定なら hostname -I から自動推測)
+#   copilot → 環境変数 COPILOT_GITHUB_TOKEN(Copilot 利用権限のある GitHub PAT)
 set -euo pipefail
 
 # ----- パス/共通変数 -----
@@ -39,17 +43,20 @@ AGENT=""
 usage() {
     cat <<'EOF'
 Usage:
-  ./scripts/bootstrap.sh --step <1|4> --agent <claude|codex>
+  ./scripts/bootstrap.sh --step <1|4> --agent <claude|codex|copilot>
 
 Options:
-  --step <1|4>           1: 1Pod 試用 / 4: 複数人 nginx 振り分け
-  --agent <claude|codex> claude: Claude Code(サブスクトークン)/ codex: Codex CLI + Ollama
-  -h, --help             このヘルプを表示
+  --step <1|4>                    1: 1Pod 試用 / 4: 複数人 nginx 振り分け
+  --agent <claude|codex|copilot>  claude:  Claude Code (サブスクトークン)
+                                  codex:   Codex CLI + Ollama
+                                  copilot: GitHub Copilot CLI (PAT)
+  -h, --help                      このヘルプを表示
 
 Environment:
   CLAUDE_CODE_OAUTH_TOKEN  --agent claude 時に必須(claude setup-token で取得)
   OLLAMA_BASE_URL          --agent codex 時に推奨(未指定なら hostname -I から自動推測)
   CODEX_MODEL              --agent codex 時のモデル名(既定: gemma4:31b-cloud)
+  COPILOT_GITHUB_TOKEN     --agent copilot 時に必須(Copilot 利用権限のある GitHub PAT)
   LAN_IP                   アクセスURL案内で使うLAN IP(未指定なら自動推測)
 EOF
 }
@@ -60,7 +67,7 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || { usage >&2; die "--step に値が必要です(1 または 4)。"; }
             STEP="$2"; shift 2 ;;
         --agent)
-            [[ $# -ge 2 ]] || { usage >&2; die "--agent に値が必要です(claude または codex)。"; }
+            [[ $# -ge 2 ]] || { usage >&2; die "--agent に値が必要です(claude / codex / copilot)。"; }
             AGENT="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "Unknown argument: $1" ;;
@@ -71,10 +78,11 @@ if [[ "$STEP" != "1" && "$STEP" != "4" ]]; then
     usage >&2
     die "--step は 1 か 4 で指定してください(現在: '${STEP}')。"
 fi
-if [[ "$AGENT" != "claude" && "$AGENT" != "codex" ]]; then
-    usage >&2
-    die "--agent は claude か codex で指定してください(現在: '${AGENT}')。"
-fi
+case "$AGENT" in
+    claude|codex|copilot) ;;
+    *) usage >&2
+       die "--agent は claude / codex / copilot のいずれかで指定してください(現在: '${AGENT}')。" ;;
+esac
 
 echo "[=] bootstrap configuration:"
 echo "    STEP  = ${STEP}"
@@ -89,9 +97,10 @@ require_command kubectl "scripts/install-tools.sh で導入してください。
 # ----- agent別の前提 env -----
 CODEX_MODEL_DEFAULT="gemma4:31b-cloud"
 
-if [[ "$AGENT" == "claude" ]]; then
-    if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-        die "環境変数 CLAUDE_CODE_OAUTH_TOKEN が未設定です。
+case "$AGENT" in
+    claude)
+        if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+            die "環境変数 CLAUDE_CODE_OAUTH_TOKEN が未設定です。
 
   1) ブラウザのある端末で(Claude Pro/Max ログイン状態で):
        claude setup-token
@@ -100,36 +109,55 @@ if [[ "$AGENT" == "claude" ]]; then
   2) この端末で:
        export CLAUDE_CODE_OAUTH_TOKEN='<paste-token-here>'
        ./scripts/bootstrap.sh --step ${STEP} --agent claude"
-    fi
-else
-    # codex フロー: curl と python3 は codex-catalog 生成で使う
-    require_command curl    "agent=codex の codex-catalog 生成で Ollama /api/show を叩くために必要。"
-    require_command python3 "/api/show の JSON から model.json を組み立てるために必要。"
+        fi
+        ;;
+    copilot)
+        if [[ -z "${COPILOT_GITHUB_TOKEN:-}" ]]; then
+            die "環境変数 COPILOT_GITHUB_TOKEN が未設定です。
 
-    # codex: OLLAMA_BASE_URL を必須、未指定なら hostname -I から自動推測
-    if [[ -z "${OLLAMA_BASE_URL:-}" ]]; then
-        auto_ip="$(detect_lan_ip)"
-        if [[ -n "$auto_ip" ]]; then
-            OLLAMA_BASE_URL="http://${auto_ip}:11434/v1"
-            echo "[=] OLLAMA_BASE_URL 未指定 → 自動推測: ${OLLAMA_BASE_URL}"
-        else
-            die "OLLAMA_BASE_URL 未指定で自動推測も失敗しました。
+  1) https://github.com/settings/personal-access-tokens/new で Fine-grained PAT を発行
+     - Resource owner: 個人アカウント(組織だと Copilot Requests permission が出ない)
+     - Permissions → Account → 'Copilot Requests' を Read 付与
+     ⚠️ Classic PAT (ghp_*) は Copilot CLI で非対応、必ず Fine-grained を発行
+
+  2) この端末で:
+       export COPILOT_GITHUB_TOKEN='github_pat_xxx...'
+       ./scripts/bootstrap.sh --step ${STEP} --agent copilot"
+        fi
+        ;;
+    codex)
+        # codex フロー: curl と python3 は codex-catalog 生成で使う
+        require_command curl    "agent=codex の codex-catalog 生成で Ollama /api/show を叩くために必要。"
+        require_command python3 "/api/show の JSON から model.json を組み立てるために必要。"
+
+        # codex: OLLAMA_BASE_URL を必須、未指定なら hostname -I から自動推測
+        if [[ -z "${OLLAMA_BASE_URL:-}" ]]; then
+            auto_ip="$(detect_lan_ip)"
+            if [[ -n "$auto_ip" ]]; then
+                OLLAMA_BASE_URL="http://${auto_ip}:11434/v1"
+                echo "[=] OLLAMA_BASE_URL 未指定 → 自動推測: ${OLLAMA_BASE_URL}"
+            else
+                die "OLLAMA_BASE_URL 未指定で自動推測も失敗しました。
   Pod から host の Ollama に到達できる URL を明示してください:
     export OLLAMA_BASE_URL='http://192.168.x.x:11434/v1'
     ./scripts/bootstrap.sh --step ${STEP} --agent codex"
+            fi
         fi
-    fi
-    OLLAMA_BASE_URL="$(normalize_url "$OLLAMA_BASE_URL")"
-    CODEX_MODEL="${CODEX_MODEL:-${CODEX_MODEL_DEFAULT}}"
-    echo "[=] Codex設定:"
-    echo "    OLLAMA_BASE_URL = ${OLLAMA_BASE_URL}"
-    echo "    CODEX_MODEL     = ${CODEX_MODEL}"
-fi
+        OLLAMA_BASE_URL="$(normalize_url "$OLLAMA_BASE_URL")"
+        CODEX_MODEL="${CODEX_MODEL:-${CODEX_MODEL_DEFAULT}}"
+        echo "[=] Codex設定:"
+        echo "    OLLAMA_BASE_URL = ${OLLAMA_BASE_URL}"
+        echo "    CODEX_MODEL     = ${CODEX_MODEL}"
+        ;;
+esac
 
 # ----- kind クラスタ作成/検証 -----
+# required_ports は kind/cluster-step*.yaml の extraPortMappings と一致させる。
+# 全 agent の ACP port (3017/3021/3025) を同時 bind しておくことで、Step 内での
+# agent 切替時に kind cluster 再作成が不要になる。
 case "$STEP" in
-    1) cluster_config="kind/cluster-step1.yaml"; required_ports=(30718 30317 30321) ;;
-    4) cluster_config="kind/cluster-step4.yaml"; required_ports=(30080 30317 30321) ;;
+    1) cluster_config="kind/cluster-step1.yaml"; required_ports=(30718 30317 30321 30325) ;;
+    4) cluster_config="kind/cluster-step4.yaml"; required_ports=(30080 30317 30321 30325) ;;
 esac
 
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
@@ -147,7 +175,11 @@ fi
 # teardown を促す。
 #   Step 1: Service marimo が nodePort を直接握る(marimo UI 30718 + agent別 ACP port)
 #   Step 4: nginx-gateway が複数 nodePort を集約(http 30080 + agent別 ACP port)
-acp_node_port=$([[ "$AGENT" == "claude" ]] && echo 30317 || echo 30321)
+case "$AGENT" in
+    claude)  acp_node_port=30317 ;;
+    codex)   acp_node_port=30321 ;;
+    copilot) acp_node_port=30325 ;;
+esac
 case "$STEP" in
     1) allowed_service_name="marimo";        node_ports=(30718 "$acp_node_port") ;;
     4) allowed_service_name="nginx-gateway"; node_ports=(30080 "$acp_node_port") ;;
@@ -167,8 +199,9 @@ done
 # image prefix を分けているので競合しない: codex-acp と acp-agent は別 prefix)。
 manifest_search_root="manifests/step${STEP}"
 case "$AGENT" in
-    claude) acp_image_prefix="marimo-envs/acp-agent:"; acp_dir="images/acp-agent" ;;
-    codex)  acp_image_prefix="marimo-envs/codex-acp:"; acp_dir="images/codex-acp" ;;
+    claude)  acp_image_prefix="marimo-envs/acp-agent:";   acp_dir="images/acp-agent"  ;;
+    codex)   acp_image_prefix="marimo-envs/codex-acp:";   acp_dir="images/codex-acp"  ;;
+    copilot) acp_image_prefix="marimo-envs/copilot-acp:"; acp_dir="images/copilot-acp" ;;
 esac
 marimo_image="$(extract_image "$manifest_search_root" "marimo-envs/marimo:")"
 acp_image="$(extract_image    "$manifest_search_root" "$acp_image_prefix")"
@@ -193,46 +226,43 @@ echo "[+] Namespace を適用..."
 kubectl --context "$KUBE_CONTEXT" apply -f manifests/namespace.yaml
 
 # ----- agent別の動的リソース(Secret / ConfigMap)作成 -----
-if [[ "$AGENT" == "claude" ]]; then
-    echo "[+] Claude OAuth トークン Secret を作成/更新..."
-    # --from-literal=token=$TOKEN だとプロセス引数として残り、同一ホストの他ユーザーが
-    # `ps` でトークンを読めてしまう。一時ファイル(mode 600)+ --from-file 経由で
-    # コマンドラインにトークンを載せないようにする。
-    token_file="$(mktemp)"
-    chmod 600 "$token_file"
-    # EXIT trap を一時的に上書きして、途中で失敗した場合も $token_file を確実に
-    # 削除する。Bash の trap はシグナルごとに1つのハンドラしか持てないので、
-    # この区間は EXIT trap が rm 専用に置き換わる。区間終了時に `trap - EXIT` で
-    # デフォルト(なし)に戻す。Codex 側の trap(catalog_dir 削除)は別のフロー
-    # なのでこの区間とは重ならない。
-    trap 'rm -f "$token_file"' EXIT
-    printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" > "$token_file"
-    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create secret generic claude-code-token \
-        --from-file=token="$token_file" \
-        --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f -
-    rm -f "$token_file"
-    trap - EXIT
-else
-    echo "[+] Codex 接続 ConfigMap (codex-config) を作成/更新..."
-    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create configmap codex-config \
-        --from-literal=ollama_base_url="$OLLAMA_BASE_URL" \
-        --from-literal=model="$CODEX_MODEL" \
-        --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f -
+# claude / copilot は「トークン1つを Secret に格納」する同型処理。共通関数
+# create_token_secret (scripts/lib/common.sh) に集約し、mktemp + chmod 600 +
+# --from-file による値のコマンドライン露出回避を一元化している。
+# codex は ConfigMap × 2(codex-config + 動的生成の codex-catalog)で独自経路。
+case "$AGENT" in
+    claude)
+        echo "[+] Claude OAuth トークン Secret を作成/更新..."
+        create_token_secret "$KUBE_CONTEXT" "$NAMESPACE" \
+            claude-code-token "$CLAUDE_CODE_OAUTH_TOKEN"
+        ;;
+    copilot)
+        echo "[+] Copilot GitHub PAT Secret を作成/更新..."
+        create_token_secret "$KUBE_CONTEXT" "$NAMESPACE" \
+            copilot-token "$COPILOT_GITHUB_TOKEN"
+        ;;
+    codex)
+        echo "[+] Codex 接続 ConfigMap (codex-config) を作成/更新..."
+        kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create configmap codex-config \
+            --from-literal=ollama_base_url="$OLLAMA_BASE_URL" \
+            --from-literal=model="$CODEX_MODEL" \
+            --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f -
 
-    echo "[+] codex-catalog を Ollama /api/show から動的生成..."
-    catalog_dir="$(mktemp -d)"
-    trap 'rm -rf "$catalog_dir"' EXIT
+        echo "[+] codex-catalog を Ollama /api/show から動的生成..."
+        catalog_dir="$(mktemp -d)"
+        trap 'rm -rf "$catalog_dir"' EXIT
 
-    fetch_ollama_model_info "$OLLAMA_BASE_URL" "$CODEX_MODEL" "$catalog_dir/api-show.json"
-    build_codex_model_catalog "$catalog_dir/api-show.json" "$CODEX_MODEL" "$catalog_dir/model.json"
+        fetch_ollama_model_info "$OLLAMA_BASE_URL" "$CODEX_MODEL" "$catalog_dir/api-show.json"
+        build_codex_model_catalog "$catalog_dir/api-show.json" "$CODEX_MODEL" "$catalog_dir/model.json"
 
-    echo "[=] 生成された model.json プレビュー:"
-    head -10 "$catalog_dir/model.json" | sed 's/^/    /'
+        echo "[=] 生成された model.json プレビュー:"
+        head -10 "$catalog_dir/model.json" | sed 's/^/    /'
 
-    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create configmap codex-catalog \
-        --from-file=model.json="$catalog_dir/model.json" \
-        --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f -
-fi
+        kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create configmap codex-catalog \
+            --from-file=model.json="$catalog_dir/model.json" \
+            --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f -
+        ;;
+esac
 
 # ----- マニフェスト適用 -----
 overlay="manifests/step${STEP}/${AGENT}"
@@ -270,7 +300,16 @@ echo " marimo + ${AGENT} ACP は起動しました (Step ${STEP})."
 echo
 case "$STEP" in
     1)
-        agent_port=$([[ "$AGENT" == "claude" ]] && echo 3017 || echo 3021)
+        # agent_ui_label は marimo UI のドロップダウンに表示される文字列と完全一致させる
+        # (補足説明は別行で出す。文字列に括弧で説明を入れるとユーザーが選択肢を
+        #  見つけられなくなる)。copilot は marimo の AGENT_CONFIG で Cursor 用
+        # port 3025 を流用するため、UI 上は「Cursor」と表示される(中身は Copilot CLI、
+        # 設計ドキュメント参照)。
+        case "$AGENT" in
+            claude)  agent_port=3017; agent_ui_label="Claude" ;;
+            codex)   agent_port=3021; agent_ui_label="Codex" ;;
+            copilot) agent_port=3025; agent_ui_label="Cursor" ;;
+        esac
         echo " このマシンから:"
         echo "   http://localhost:2718/"
         if [[ -n "$lan_ip" ]]; then
@@ -282,7 +321,11 @@ case "$STEP" in
         echo " marimo UI で:"
         echo "   1. Settings → Lab → \"agents\" を有効化(初回のみ)"
         echo "   2. 左サイドバーのエージェントアイコン"
-        echo "   3. ドロップダウンから \"${AGENT^}\" を選択"
+        echo "   3. ドロップダウンから \"${agent_ui_label}\" を選択"
+        if [[ "$AGENT" == "copilot" ]]; then
+            echo "      (本リポジトリは Cursor 枠で Copilot CLI を動かしているため、"
+            echo "       UI 上は \"Cursor\" と表示されます)"
+        fi
         echo "   4. ブラウザは ws://<同じホスト>:${agent_port}/message に自動接続"
         ;;
     4)

@@ -1,6 +1,10 @@
 # 詳細セットアップとトラブルシューティング
 
-> **Step 1(1人での試用)と Step 4(複数人並走PoC)の両方を扱う。** 共通の前提・トークン取得・MCP動作確認は両方に効く。本書は **`--agent claude`** 前提で書かれている(OAuthトークン取得など Claude 固有手順を含むため)。**Codex + Ollama 構成は README の「統合 CLI」セクションを参照**(`./scripts/bootstrap.sh --step <S> --agent codex`)。
+> **Step 1(1人での試用)と Step 4(複数人並走PoC)の両方を扱う。** 共通の前提・トークン取得・MCP動作確認は両方に効く。本書は **`--agent claude`** 前提で書かれている(OAuthトークン取得など Claude 固有手順を含むため)。
+>
+> **Codex + Ollama 構成は README の「統合 CLI」セクションを参照**(`./scripts/bootstrap.sh --step <S> --agent codex`)。
+>
+> **Copilot CLI 構成**は `--agent copilot` で起動可能。手順は本書 3-A / 3-B の `CLAUDE_CODE_OAUTH_TOKEN` を `COPILOT_GITHUB_TOKEN`(GitHub PAT)に読み替え、UI 上のエージェント選択肢は「**Cursor**」(中身は Copilot CLI)を選ぶ。設計の経緯は [copilot-agent-design.md](copilot-agent-design.md) を参照。
 
 ## 前提環境の確認
 
@@ -155,7 +159,12 @@ curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
   ```
 
 ### LAN の他PC から繋がらない
-- ホスト側 firewall(`ufw` / `firewalld` / `iptables`)で 該当ポート(Step1: 2718/3017, Step4: 80/3017)が許可されているか確認
+- ホスト側 firewall(`ufw` / `firewalld` / `iptables`)で該当ポートが許可されているか確認:
+  - Step 1: 2718(marimo UI)+ 3017(Claude)/ 3021(Codex)/ 3025(Copilot)のうち使う agent の ACP port
+  - Step 4: 80(marimo UI)+ 同じく agent 別 ACP port
+- **kind 経由なら通常は透過**(Docker daemon が iptables ルールを動的挿入)。
+  これに頼らず素の marimo + `stdio-to-ws` を立てるケースでは、ホスト OS のファイアウォール
+  を別途許可する必要がある(ヘッドレスサーバー上で CLI 検証して別 PC ブラウザから接続する時の罠)
 - kind は `listenAddress: "0.0.0.0"` 指定済み(`kind/cluster-step1.yaml` / `kind/cluster-step4.yaml`)。`ss -tlnp` で `0.0.0.0:<port>` と表示されていればOK、`127.0.0.1:...` なら kind の再作成が必要
 
 ### Step 4: `nb1.*.nip.io` が解決されない

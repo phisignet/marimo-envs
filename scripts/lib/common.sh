@@ -14,6 +14,10 @@
 #   extract_image <manifest_search_root> <image_name_prefix>
 #                           マニフェスト配下を再帰検索して `image:` 行を抽出
 #                           (image タグの単一情報源化)
+#   create_token_secret <context> <namespace> <secret_name> <token_value>
+#                           1つのトークンを持つSecretを冪等apply。トークン値が
+#                           `ps` 等から見えないよう一時ファイル(mode 600)+
+#                           --from-file 経由で渡す。
 
 # ----- 基本ユーティリティ -----
 
@@ -166,4 +170,37 @@ extract_image() {
     local manifest_search_root="$1" image_name_prefix="$2"
     { grep -REh "^[[:space:]]+image:[[:space:]]+${image_name_prefix}" "$manifest_search_root" \
         | head -1 | awk '{print $2}'; } || true
+}
+
+# create_token_secret <context> <namespace> <secret_name> <token_value>:
+#   トークン1個を持つ Secret(キー名は固定で "token")を冪等に apply する。
+#
+#   `kubectl create secret --from-literal=token=$VALUE` だと、トークン値が
+#   プロセス引数として残り `ps` 等で同一ホストの他ユーザーから見えてしまう。
+#   一時ファイル(mode 600)に書き出して `--from-file=token=<file>` 経由で
+#   渡すことで、コマンドラインへの値露出を回避。
+#
+#   実装上の注意: 関数全体をサブシェル `(...)` で囲んで EXIT trap を
+#   閉じ込めている。これにより:
+#   - 呼び出し元が別途設定している EXIT trap(例: bootstrap.sh の Codex フロー
+#     で設定する catalog_dir 削除 trap)に副作用を与えない
+#   - サブシェル終了時に trap が自動消滅するため `trap - EXIT` での復元不要
+#
+#   呼び出し例:
+#     create_token_secret "$KUBE_CONTEXT" "$NAMESPACE" \
+#         claude-code-token "$CLAUDE_CODE_OAUTH_TOKEN"
+#     create_token_secret "$KUBE_CONTEXT" "$NAMESPACE" \
+#         copilot-token     "$COPILOT_GITHUB_TOKEN"
+create_token_secret() {
+    local context="$1" namespace="$2" secret_name="$3" token_value="$4"
+    (
+        local token_file
+        token_file="$(mktemp)"
+        chmod 600 "$token_file"
+        trap 'rm -f "$token_file"' EXIT
+        printf '%s' "$token_value" > "$token_file"
+        kubectl --context "$context" -n "$namespace" create secret generic "$secret_name" \
+            --from-file=token="$token_file" \
+            --dry-run=client -o yaml | kubectl --context "$context" apply -f -
+    )
 }

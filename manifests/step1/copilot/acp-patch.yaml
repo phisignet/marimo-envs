@@ -1,0 +1,42 @@
+# Step 1 / copilot overlay: marimo Deployment に copilot-acp サイドカーを追加。
+#
+# 認証は GitHub Copilot 用 Fine-grained PAT:
+#   1. https://github.com/settings/personal-access-tokens/new で発行
+#      - Resource owner: 個人アカウント(組織だと Copilot Requests permission が出ない)
+#      - Permissions → Account → 'Copilot Requests' を Read 付与
+#      - ⚠️ Classic PAT (ghp_*) は Copilot CLI で非対応、必ず Fine-grained
+#   2. bootstrap.sh が COPILOT_GITHUB_TOKEN env を Secret copilot-token に格納
+#   3. このサイドカーが env として読む
+# entrypoint.sh が起動時に GH_TOKEN / GITHUB_TOKEN を unset(env 干渉での 401
+# ループ回避)してから `stdio-to-ws copilot --acp --stdio` を起動する。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marimo
+spec:
+  template:
+    spec:
+      containers:
+        - name: copilot-acp
+          image: marimo-envs/copilot-acp:0.1.0  # bootstrap.sh がビルド → kind load
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - name: COPILOT_GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: copilot-token
+                  key: token
+          ports:
+            - name: acp
+              containerPort: 3025
+              protocol: TCP
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              memory: "2Gi"
