@@ -300,12 +300,15 @@ echo " marimo + ${AGENT} ACP は起動しました (Step ${STEP})."
 echo
 case "$STEP" in
     1)
+        # agent_ui_label は marimo UI のドロップダウンに表示される文字列と完全一致させる
+        # (補足説明は別行で出す。文字列に括弧で説明を入れるとユーザーが選択肢を
+        #  見つけられなくなる)。copilot は marimo の AGENT_CONFIG で Cursor 用
+        # port 3025 を流用するため、UI 上は「Cursor」と表示される(中身は Copilot CLI、
+        # 設計ドキュメント参照)。
         case "$AGENT" in
             claude)  agent_port=3017; agent_ui_label="Claude" ;;
             codex)   agent_port=3021; agent_ui_label="Codex" ;;
-            # copilot は marimo の AGENT_CONFIG で Cursor 用 port 3025 を流用するため、
-            # UI 上の選択肢は「Cursor」だが実体は Copilot CLI(設計ドキュメント参照)。
-            copilot) agent_port=3025; agent_ui_label="Cursor (実体は Copilot CLI)" ;;
+            copilot) agent_port=3025; agent_ui_label="Cursor" ;;
         esac
         echo " このマシンから:"
         echo "   http://localhost:2718/"
@@ -319,6 +322,10 @@ case "$STEP" in
         echo "   1. Settings → Lab → \"agents\" を有効化(初回のみ)"
         echo "   2. 左サイドバーのエージェントアイコン"
         echo "   3. ドロップダウンから \"${agent_ui_label}\" を選択"
+        if [[ "$AGENT" == "copilot" ]]; then
+            echo "      (本リポジトリは Cursor 枠で Copilot CLI を動かしているため、"
+            echo "       UI 上は \"Cursor\" と表示されます)"
+        fi
         echo "   4. ブラウザは ws://<同じホスト>:${agent_port}/message に自動接続"
         ;;
     4)

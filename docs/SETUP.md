@@ -164,7 +164,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
   - Step 4: 80(marimo UI)+ 同じく agent 別 ACP port
 - **kind 経由なら通常は透過**(Docker daemon が iptables ルールを動的挿入)。
   これに頼らず素の marimo + `stdio-to-ws` を立てるケースでは、ホスト OS のファイアウォール
-  を別途許可する必要がある(adams のようなヘッドレスサーバーで CLI 検証する時の罠)
+  を別途許可する必要がある(ヘッドレスサーバー上で CLI 検証して別 PC ブラウザから接続する時の罠)
 - kind は `listenAddress: "0.0.0.0"` 指定済み(`kind/cluster-step1.yaml` / `kind/cluster-step4.yaml`)。`ss -tlnp` で `0.0.0.0:<port>` と表示されていればOK、`127.0.0.1:...` なら kind の再作成が必要
 
 ### Step 4: `nb1.*.nip.io` が解決されない

@@ -55,17 +55,17 @@ claude=3017, gemini=3019, codex=3021, opencode=3023, cursor=3025
 
 ### 2.1 ローカル動作確認(2026-05-27)
 
-adams ヘッドレス上で動作確認済:
+ヘッドレスサーバー上で動作確認済(`<HEADLESS_HOST>` = 実行サーバー、`<BROWSER_PC>` = アクセスする別 PC):
 
 ```bash
 export COPILOT_GITHUB_TOKEN='github_pat_xxx'  # Fine-grained PAT(Copilot Requests 権限)
 npx -y stdio-to-ws "copilot --acp --stdio" --port 3025
 # 別ターミナル
 marimo edit --no-token --host 0.0.0.0 --port 2718
-# 別 PC ブラウザから http://adams:2718/ → Agents パネルで Cursor 選択 → 接続成功
+# <BROWSER_PC> から http://<HEADLESS_HOST>:2718/ → Agents パネルで Cursor 選択 → 接続成功
 ```
 
-`session/new` まで通って、Copilot がユーザーメッセージに応答することを確認。adams ヘッドレス + zeros ブラウザの構成では、別途ホスト OS のファイアウォール開放(`ufw allow 2718,3025/tcp`)が必要。kind 経由なら Docker daemon が iptables を動的挿入してくれるため透過。
+`session/new` まで通って、Copilot がユーザーメッセージに応答することを確認。ヘッドレスサーバー + 別 PC ブラウザの構成では、別途ホスト OS のファイアウォール開放(`ufw allow 2718,3025/tcp`)が必要。kind 経由なら Docker daemon が iptables を動的挿入してくれるため透過。
 
 ## 3. アーキテクチャ
 
@@ -308,8 +308,8 @@ esac
 
 ### 7.1 ローカル動作確認(済)
 
-- [x] adams で `copilot --acp --stdio` 単体動作
-- [x] adams で `stdio-to-ws "copilot --acp --stdio" --port 3025` 経由 marimo 接続
+- [x] ヘッドレスサーバー上で `copilot --acp --stdio` 単体動作
+- [x] 同上で `stdio-to-ws "copilot --acp --stdio" --port 3025` 経由 marimo 接続
 - [x] 別 PC ブラウザから接続 + チャット欄表示 + `Hi` への応答確認
 
 ### 7.2 PR マージ前(本実装後)
@@ -346,5 +346,9 @@ esac
 
 ---
 
-**レビューOK後の実装フェーズ:**
-本ドキュメントの 5 章(詳細仕様)に従って実装 → 7.2 テスト → PR(本 draft を昇格)→ マージ。
+**次のアクション(2026-05-28 時点):**
+本ドキュメントの設計はすでに PR #6 で実装済み。残作業は:
+1. 実機検証(Step 1 / Step 4 双方で動作確認、リグレッションテスト)
+2. レビュー対応(本 PR で進行中)
+3. 会社環境での最終確認(会社 Copilot サブスク + 社内 Ollama 経路の再現)
+4. マージ
