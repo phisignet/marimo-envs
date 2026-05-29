@@ -21,6 +21,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         ca-certificates \
         tini \
+        curl \
+        jq \
  && rm -rf /var/lib/apt/lists/*
 
 # ACPスタックを事前インストール。
@@ -35,6 +37,13 @@ RUN npm install -g \
 # uid 1000(node)で動かす。Claude/Codex 構成と同じ流儀。
 COPY --chown=node:node entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# marimo-pair skill を Copilot CLI の personal skill ディレクトリへ配置。
+# Copilot CLI は ~/.copilot/skills/ から skill をロードし、ACP クライアント上でも
+# slash command として利用可能(@github/copilot changelog 参照)。
+# スキルは scripts/vendor-marimo-pair.sh で pin 取得済み(.vendored-version 参照)。
+# curl/jq は execute-code.sh が marimo の HTTP API を叩くのに必要(上の apt で導入済)。
+COPY --chown=node:node marimo-pair-skill /home/node/.copilot/skills/marimo-pair
 
 USER node
 WORKDIR /workspace

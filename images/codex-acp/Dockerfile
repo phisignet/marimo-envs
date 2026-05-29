@@ -22,6 +22,8 @@ RUN apt-get update \
         git \
         ca-certificates \
         tini \
+        curl \
+        jq \
  && rm -rf /var/lib/apt/lists/*
 
 # Codex スタックを事前インストール(起動時の npx ネットワーク取得を回避)。
@@ -41,6 +43,12 @@ RUN npm install -g \
 # 起動時に ~/.codex/config.toml を env から動的生成するエントリポイント。
 COPY --chown=node:node entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# marimo-pair skill を Codex の skill ディレクトリへ配置。
+# Codex は ~/.codex/skills/ から skill をロードする(marimo 公式 pair サポート対象)。
+# スキルは scripts/vendor-marimo-pair.sh で pin 取得済み(.vendored-version 参照)。
+# curl/jq は execute-code.sh が marimo の HTTP API を叩くのに必要(上の apt で導入済)。
+COPY --chown=node:node marimo-pair-skill /home/node/.codex/skills/marimo-pair
 
 USER node
 WORKDIR /workspace
