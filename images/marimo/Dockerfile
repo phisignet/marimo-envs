@@ -27,6 +27,37 @@ ARG MARIMO_VERSION
 # --mcp の hidden 仕様変更を踏むリスクがある。
 RUN pip install --no-cache-dir "marimo[mcp]==${MARIMO_VERSION}"
 
+# データ分析でよく使うライブラリを事前インストール。
+# カーネル(このコンテナ)でセルを実行する際、エージェント/ユーザーが毎回
+# ctx.packages.add() や pip で入れる手間とインストール待ちを省く。
+# marimo-pair の code_mode でも import がそのまま通る。
+# 未 pin(範囲指定なし)= base イメージの Python に対する最新解決。再現性が
+# 必要になったらここで個別 pin する設計。
+#
+# root で入れる理由: 一部パッケージ(altair/nbformat 系)が root 所有の
+# /usr/local/share/jupyter にデータファイルを書くため、appuser のままだと
+# Permission denied になる。インストール後、site-packages / bin / share を
+# appuser に chown し直し、ランタイムの ctx.packages.add() / pip が引き続き
+# 書き込めるようにする(base イメージの所有設計を維持)。
+USER root
+RUN pip install --no-cache-dir \
+        numpy \
+        pandas \
+        matplotlib \
+        seaborn \
+        altair \
+        plotly \
+        polars \
+        pyarrow \
+        scikit-learn \
+        scipy \
+        statsmodels \
+ && chown -R appuser:appuser \
+        /usr/local/lib/python*/site-packages \
+        /usr/local/bin \
+        /usr/local/share
+USER appuser
+
 # 初期 marimo user config を焼き込み:
 #   [experimental] external_agents = true
 # ブラウザの Settings → Lab で毎回手動で有効化する手間を省く。
@@ -35,7 +66,7 @@ RUN pip install --no-cache-dir "marimo[mcp]==${MARIMO_VERSION}"
 # ファイル所有を appuser にして、ランタイムでの追加設定変更(他フラグ等)も
 # marimo が同じファイルに書き戻せるようにする(read-write のままにする)。
 RUN mkdir -p /home/appuser/.config/marimo \
- && printf '[experimental]\nexternal_agents = true\n' \
+ && printf '[experimental]\nexternal_agents = true\n\n[runtime]\nwatcher_on_save = "autorun"\n' \
         > /home/appuser/.config/marimo/marimo.toml
 
 # 公式CMDは:
@@ -50,5 +81,9 @@ RUN mkdir -p /home/appuser/.config/marimo \
 # 同Pod内ACPサイドカーは `http://localhost:2718/mcp/server` に Host=localhost
 # で繋ぐので無効化しなくても通る(2026-05実機検証済)。
 # nginx 等の前段ホスト名で受ける構成に拡張する際だけ env で有効化する。
+# MARIMO_NOTEBOOK: 起動時に開くノートブックのパス(デフォルト: /workspace/notebook.py)。
+# ファイルが存在しない場合は marimo が自動作成する。
+# ファイル名を指定しないとホーム画面が開きエージェントとチャットを始められないため必須。
 ENV MARIMO_ALLOW_REMOTE_MCP=""
-CMD ["sh", "-c", "ALLOW=; [ \"$MARIMO_ALLOW_REMOTE_MCP\" = \"1\" ] && ALLOW=\"--mcp-allow-remote\"; exec marimo edit --no-token --mcp $ALLOW -p $PORT --host $HOST"]
+ENV MARIMO_NOTEBOOK="/workspace/notebook.py"
+CMD ["sh", "-c", "ALLOW=; [ \"$MARIMO_ALLOW_REMOTE_MCP\" = \"1\" ] && ALLOW=\"--mcp-allow-remote\"; exec marimo edit --no-token --mcp --watch $ALLOW -p $PORT --host $HOST \"$MARIMO_NOTEBOOK\""]
