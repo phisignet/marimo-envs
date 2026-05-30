@@ -122,18 +122,6 @@ has token auth enabled (`--token` flag also works but exposes the token
 in process listings). If the server was started with `--mcp`, you'll
 have MCP tools available as an alternative.
 
-### Discovery finds nothing but the user has a server running?
-
-Only `--no-token` servers are in the registry. If discovery comes up empty,
-the server likely has token auth — ask the user for the token and set it as
-the `MARIMO_TOKEN` environment variable.
-
-On **Windows (Git Bash / MSYS2)**, discovery can also come up empty even for
-a running `--no-token` server. If the user confirms marimo is reachable
-locally, fall back to `--url http://127.0.0.1:<port>` (ask for the port).
-
-### No servers running?
-
 **Always discover before starting.** Background task "completed" notifications
 do not mean the server died — check the output or run discover first.
 

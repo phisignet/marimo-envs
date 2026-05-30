@@ -95,9 +95,6 @@ data:
         listen 3025;
         server_name ~^nb1\..+\.nip\.io$;
 
-        # ?view-as=present がなければリダイレクト(marimo 組み込みの app view 起動パラメータ)
-        if ($request_uri = "/") { return 302 /?view-as=present; }
-
         location / {
           proxy_pass http://marimo-nb1.marimo.svc.cluster.local:3025;
           proxy_set_header Host              $host;
@@ -112,9 +109,6 @@ data:
       server {
         listen 3025;
         server_name ~^nb2\..+\.nip\.io$;
-
-        # ?view-as=present がなければリダイレクト(marimo 組み込みの app view 起動パラメータ)
-        if ($request_uri = "/") { return 302 /?view-as=present; }
 
         location / {
           proxy_pass http://marimo-nb2.marimo.svc.cluster.local:3025;

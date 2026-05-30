@@ -97,8 +97,34 @@ for i, line in enumerate(lines):
 if insert_at is None:
     print(f"ERROR: frontmatter terminator not found in {path}", file=sys.stderr)
     sys.exit(1)
-out = "".join(lines[:insert_at]) + note + "\n" + "".join(lines[insert_at:])
-open(path, "w", encoding="utf-8").write(out)
+text = "".join(lines[:insert_at]) + note + "\n" + "".join(lines[insert_at:])
+
+# upstream の discovery/サーバー起動セクションを除去する。
+# この環境では discovery は常に空(別コンテナ)・marimo は常時起動済みのため、
+# 「No servers running? → start one」等の手順は冒頭注記(--url 必須・新規起動禁止)
+# と矛盾する。該当 '###' セクションを次の見出しまで削除する。
+# best-effort: 見つからなくても警告のみ(冒頭注記が最終的な権威)。
+remove_titles = [
+    "### Discovery finds nothing but the user has a server running?",
+    "### No servers running?",
+]
+out_lines = text.splitlines(keepends=True)
+for title in remove_titles:
+    start = next((i for i, ln in enumerate(out_lines) if ln.strip() == title), None)
+    if start is None:
+        print(f"WARN: section '{title}' not found in {path} (upstream 変更?)", file=sys.stderr)
+        continue
+    # 次の見出し(## / ###)または無関係な後続トピック(**Avoid… 等の太字段落)
+    # まで削除。discovery/サーバー起動の記述だけに絞り、heredoc 例などの有用な
+    # 後続コンテンツを巻き込まないようにする。
+    end = len(out_lines)
+    for j in range(start + 1, len(out_lines)):
+        ln = out_lines[j]
+        if ln.startswith("## ") or ln.startswith("### ") or ln.startswith("**"):
+            end = j
+            break
+    del out_lines[start:end]
+open(path, "w", encoding="utf-8").write("".join(out_lines))
 PY
 
     # execute-code.sh のサイレント失敗を修正(ローカルパッチ)。

@@ -166,7 +166,7 @@ ACPで接続したエージェントは、以下を使ってノートブック�
 **marimo-pair skill 由来**(全エージェントイメージに焼き込み済み):
 - 稼働中の marimo カーネルに **直接コードを実行**(`execute-code.sh` → `/api/kernel/execute`)
 - `marimo._code_mode` でセルの作成/編集/削除・実行、パッケージ追加、ウィジェット操作
-- ファイル編集より高機能(リッチ表示・カーネル内省・即時反映)。実行結果はファイル `/workspace/notebook.py` にも永続化される
+- ファイル編集より高機能(リッチ表示・カーネル内省・即時反映)。**`code_mode` で作成/編集したセル構造**は `/workspace/notebook.py` に永続化される(一方、`execute-code.sh` の素のスクラッチパッド実行による一時変数・実行結果は永続化されない)
 - スキルの配置先: claude=`~/.claude/skills/`、copilot=`~/.copilot/skills/`、codex=`~/.codex/skills/`
 - **接続は必ず `--url http://localhost:2718`**(別コンテナのため discovery は使えない。焼き込んだ SKILL.md 冒頭に明記済み)
 - バージョン更新: `./scripts/vendor-marimo-pair.sh`(pin tag を取得し3イメージへ再 vendor)
