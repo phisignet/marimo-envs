@@ -122,38 +122,6 @@ has token auth enabled (`--token` flag also works but exposes the token
 in process listings). If the server was started with `--mcp`, you'll
 have MCP tools available as an alternative.
 
-**Always discover before starting.** Background task "completed" notifications
-do not mean the server died — check the output or run discover first.
-
-If no servers are found, read the user's intent — if they want a notebook,
-start one. **Always start marimo as a background task** (using
-`run_in_background` on the Bash tool) so the server automatically gets cleaned
-up when the session ends and doesn't block the conversation. See
-[finding-marimo.md](reference/finding-marimo.md).
-
-If there's no `.py` file yet, pick a descriptive filename based on context
-(e.g., `exploration.py`, `analysis.py`, `dashboard.py`). Don't ask — just
-pick something reasonable.
-
-**Avoid shell escaping issues.** `-c` works for simple one-liners, but for
-multiline code or code with quotes/backticks/`${}`, use a heredoc or a file:
-
-```bash
-# heredoc (single-quoted delimiter prevents shell interpolation)
-bash scripts/execute-code.sh <<'EOF'
-import marimo._code_mode as cm
-
-async with cm.get_context() as ctx:
-    ctx.create_cell("x = 1")
-EOF
-
-# file
-bash scripts/execute-code.sh /tmp/code.py
-
-# target a specific port (skips auto-selection when multiple servers run)
-bash scripts/execute-code.sh --port 2718 -c "1 + 1"
-```
-
 ## Executing Code
 
 Every execute-code call runs inside the notebook's kernel. All cell variables

@@ -114,13 +114,15 @@ for title in remove_titles:
     if start is None:
         print(f"WARN: section '{title}' not found in {path} (upstream 変更?)", file=sys.stderr)
         continue
-    # 次の見出し(## / ###)または無関係な後続トピック(**Avoid… 等の太字段落)
-    # まで削除。discovery/サーバー起動の記述だけに絞り、heredoc 例などの有用な
-    # 後続コンテンツを巻き込まないようにする。
+    # 次の見出し(## / ###)まで削除。セクション本文に **太字段落** が含まれる
+    # ため、太字行を境界にするとヘッダーだけ消えて「start one」等の矛盾本文が
+    # 残ってしまう(実害)。確実に矛盾を消すため見出し単位で除去する。
+    # 「No servers running?」直後の Avoid shell escaping 例も巻き込まれるが、
+    # 冒頭注記に heredoc 例があり冗長なので許容する。
     end = len(out_lines)
     for j in range(start + 1, len(out_lines)):
         ln = out_lines[j]
-        if ln.startswith("## ") or ln.startswith("### ") or ln.startswith("**"):
+        if ln.startswith("## ") or ln.startswith("### "):
             end = j
             break
     del out_lines[start:end]
