@@ -103,11 +103,22 @@ kubectl -n marimo logs deploy/marimo -c marimo
 # ACPサイドカーのログ(stdio-to-ws が listen している様子)
 kubectl -n marimo logs deploy/marimo -c acp-agent
 
-# ホスト側でポートが開いているか
-ss -tlnp | grep -E ':2718|:3017'  # LISTEN 0.0.0.0:2718, 0.0.0.0:3017 が見えるはず
+# ホスト側でポートが開いているか(2718=marimo UI + 起動した agent の ACP port)
+# claude=3017 / codex=3021 / copilot=3025。選んだ agent の port が LISTEN していればOK。
+# grep -E(ERE)では \b は使えない(多くの環境でバックスペース扱い)ので、ポート番号の
+# 後ろが「数字以外 or 行末」であることで締める([^0-9]|$)。:12718 等への誤マッチを防ぐ。
+ss -tlnp | grep -E ':(2718|3017|3021|3025)([^0-9]|$)'  # 例: 0.0.0.0:2718 と 0.0.0.0:30XX
 ```
 
-ブラウザで `http://localhost:2718/` を開く。Lab フラグを有効化してエージェントパネルを開き、Claude を選択。WSが繋がると「接続OK」状態になり、メッセージが送れる。
+ブラウザで `http://localhost:2718/?view-as=present` を開く。app view(コード非表示)で
+ノートブックが開けば OK(初回は `/workspace/notebook.py` が自動生成される)。Lab フラグを
+有効化してエージェントパネルを開き、起動した agent を選択(claude→Claude / codex→Codex /
+copilot→Cursor)。WSが繋がると「接続OK」状態になり、メッセージが送れる。
+
+エージェントに「セルを1つ追加して」等を依頼し、app view に即座に反映されれば
+`--watch`/autorun か marimo-pair(code_mode)のどちらか(または両方)が機能している
+(どちらの経路でも即時反映されるため、この確認だけでは両方の動作までは断定できない)。
+起動後の使い方の詳細は [USAGE.md](USAGE.md) を参照。
 
 ### 4-B. 動作確認(Step 4)
 
@@ -125,9 +136,9 @@ kubectl -n marimo logs deploy/marimo-nb2 -c acp-agent
 
 # ホスト側ポート(80 と 3017 が両方 LISTEN しているはず)
 # ss の Local Address は "0.0.0.0:80" のような形式で続いて空白+次列が来る。
-# `:80 ` のようなパターンだと環境差で取りこぼすので、:80 の後ろが「数字でない」
-# = 数字境界 (\b) で締めるパターンが汎用的。
-ss -tlnp | grep -E ':80\b|:3017\b'
+# grep -E(ERE)では \b は使えないため、ポート番号の後ろが「数字以外 or 行末」
+# ([^0-9]|$)であることで締める。:800 や :8017 等への誤マッチを防ぐ。
+ss -tlnp | grep -E ':(80|3017)([^0-9]|$)'
 
 # nip.io 解決確認(LAN_IP は IPv4 のみ抽出。docker bridge 等を除外)
 LAN_IP=${LAN_IP:-$(hostname -I 2>/dev/null | tr ' ' '\n' \
@@ -147,6 +158,27 @@ curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
 ブラウザで `http://nb1.<LAN_IP>.nip.io/` を開く。エージェント有効化後、Networkタブで `ws://nb1.<LAN_IP>.nip.io:3017/message` が確立されることを確認(本構成は平文HTTP/WSなので `ws://`。Step 5 で TLS 導入時は `wss://` に変わる)。同じ手順で nb2 も別の独立した環境として開ける。
 
 ## トラブルシューティング
+
+### Copilot で Autopilot モードにするとエラーになる
+
+Copilot のチャットで **Autopilot をいきなり選ぶと** 失敗する:
+
+```
+{"details":"Permission service is unavailable for this session."} (code: -32603)
+```
+
+Copilot CLI の ACP モードで permission service が遅延初期化される(初回のツール権限
+チェック時に生成)ことに起因する既知の挙動。Pod 設定の問題ではない。
+
+**回避策(フラグ不要):**
+1. まず **Agent モードで一度やり取り**する(ツール実行を1回走らせて permission
+   service を初期化)。
+2. その後 **Autopilot に切り替える**と成功する(Agent モードの承認はそのまま残る)。
+
+全自動運用(human-in-the-loop なし)が必要なら、`images/copilot-acp/entrypoint.sh` の
+`copilot` コマンドに `--yolo`(=`--allow-all`)を付けると起動時から autopilot 相当に
+できるが、**全モードで承認が一切なくなる**(シェル・ファイル書込含む)ため、Step 4
+複数人環境では危険。常用は非推奨。詳細は [USAGE.md](USAGE.md) §6。
 
 ### marimo UI は開けるがエージェントが繋がらない
 
@@ -175,7 +207,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
 ### Step 4: ブラウザは `nbN.*.nip.io/` 開けるがエージェントが繋がらない
 - ブラウザの開発者ツール → Network → WS で `ws://nbN.<LAN_IP>.nip.io:3017/message` を見る(本構成は平文HTTP/WSなので `ws://`。TLS化時のみ `wss://`)
 - 404: nginx の :3017 リスナーで Hostヘッダがマッチしていない可能性 → `kubectl --context kind-marimo -n marimo logs deploy/nginx-gateway` で `404` ログを確認、`server_name` の正規表現が `nbN\..+\.nip\.io` の形にマッチしているか
-- 接続失敗: nginx Pod が落ちているか、ホスト側 :3017 が開いていない → `kubectl --context kind-marimo -n marimo get pods`, `ss -tlnp | grep -E ':3017\b'`
+- 接続失敗: nginx Pod が落ちているか、ホスト側 :3017 が開いていない → `kubectl --context kind-marimo -n marimo get pods`, `ss -tlnp | grep -E ':3017([^0-9]|$)'`
 
 ### Pod が CrashLoopBackOff になる
 
@@ -263,10 +295,10 @@ marimo UI のエージェントパネルで、Claude に「現在のMCPツール
 
 | Step | 内容 | 状態 |
 |---|---|---|
-| 1 | 1人での試用(ACP直接公開: claude=3017 / codex=3021) | ✅ 完了。`scripts/bootstrap.sh --step 1 --agent <claude\|codex>` で再現 |
+| 1 | 1人での試用(ACP直接公開: claude=3017 / codex=3021 / copilot=3025) | ✅ 完了。`scripts/bootstrap.sh --step 1 --agent <claude\|codex\|copilot>` で再現 |
 | 2 | 社内ネットワークでのワイルドカードDNS手配 | (家庭環境では nip.io で代替済み。会社では情シスに相談予定) |
 | 3 | 上司含む2–3人デモ | 未着手 |
-| 4 | 複数ユーザー並列 + nginx Host振り分け(PoC) | ✅ 完了。`scripts/bootstrap.sh --step 4 --agent <claude\|codex>` で再現。`nb1` / `nb2` の2テナントで動作確認済み |
+| 4 | 複数ユーザー並列 + nginx Host振り分け(PoC) | ✅ 完了。`scripts/bootstrap.sh --step 4 --agent <claude\|codex\|copilot>` で再現。`nb1` / `nb2` の2テナントで動作確認済み |
 | 5 | 本番k8s(EKS/GKE/AKS等)へ移行 | 未着手。LoadBalancer / Ingress / TLS / 認証(Basic / OIDC) / 動的テナント発行 |
 
 **Step 4 → Step 5 へ拡張する際の見立て:**
