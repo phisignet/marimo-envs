@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # 共通ライブラリ — bootstrap.sh / teardown.sh から source して使う。
 # このファイル単体での実行は想定しない(set -e は呼び出し側の責任)。
 #
@@ -137,6 +138,9 @@ verify_port_mappings() {
 check_nodeport_conflict() {
     local context="$1" allowed_namespace="$2" node_port="$3" allowed_service_name="$4"
     local conflicting
+    # SC2016: go-template 内の {{...}} は Go 側で展開される意図的な単一引用符。
+    # shell 変数 ${node_port} のみ '"..."' で外出しして展開している。
+    # shellcheck disable=SC2016
     conflicting=$({ kubectl --context "$context" get svc -A \
         -o go-template='{{range .items}}{{$ns := .metadata.namespace}}{{$name := .metadata.name}}{{range .spec.ports}}{{if eq .nodePort '"${node_port}"'}}{{$ns}}/{{$name}}{{"\n"}}{{end}}{{end}}{{end}}' \
         2>/dev/null | grep -v "^${allowed_namespace}/${allowed_service_name}\$" | grep -v '^$' | head -1; } || true)

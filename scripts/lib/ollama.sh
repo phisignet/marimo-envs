@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Ollama 連携ライブラリ — bootstrap.sh から source して使う。
 # common.sh の die / normalize_url 等に依存。
 #

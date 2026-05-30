@@ -162,6 +162,8 @@ marimo UI を開いたら:
 | `scripts/lib/common.sh` | 共通関数(LAN_IP 自動推測、cluster 検証、die、Secret 作成等) |
 | `scripts/lib/ollama.sh` | Ollama `/api/show` → Codex `model.json` 生成 |
 | `scripts/vendor-marimo-pair.sh` | marimo-pair skill を pin tag で各イメージへ vendor(環境固有注記の前置・矛盾セクション除去・サイレント失敗修正を適用) |
+| `scripts/test.sh` / `scripts/install-test-tools.sh` | テストランナー(shellcheck + bats)/ テストツール導入(sudo 不要) |
+| `tests/` | shellcheck + bats(`lib/*` 関数・bootstrap 引数検証・kustomize build 検証)。詳細は [tests/README.md](tests/README.md) |
 | `docs/USAGE.md` | 起動後の利用ガイド(エージェント協働・marimo-pair・モード・パッケージ) |
 | `docs/SETUP.md` | 詳細手順とトラブルシューティング |
 | `docs/copilot-agent-design.md` | Copilot CLI 統合の設計ドキュメント |
