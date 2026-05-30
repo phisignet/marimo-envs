@@ -105,7 +105,7 @@ kubectl -n marimo logs deploy/marimo -c acp-agent
 
 # ホスト側でポートが開いているか(2718=marimo UI + 起動した agent の ACP port)
 # claude=3017 / codex=3021 / copilot=3025。選んだ agent の port が LISTEN していればOK。
-ss -tlnp | grep -E ':2718|:3017|:3021|:3025'  # 例: 0.0.0.0:2718 と 0.0.0.0:30XX
+ss -tlnp | grep -E ':2718\b|:3017\b|:3021\b|:3025\b'  # 例: 0.0.0.0:2718 と 0.0.0.0:30XX
 ```
 
 ブラウザで `http://localhost:2718/?view-as=present` を開く。app view(コード非表示)で
