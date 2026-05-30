@@ -105,7 +105,9 @@ kubectl -n marimo logs deploy/marimo -c acp-agent
 
 # ホスト側でポートが開いているか(2718=marimo UI + 起動した agent の ACP port)
 # claude=3017 / codex=3021 / copilot=3025。選んだ agent の port が LISTEN していればOK。
-ss -tlnp | grep -E ':2718\b|:3017\b|:3021\b|:3025\b'  # 例: 0.0.0.0:2718 と 0.0.0.0:30XX
+# grep -E(ERE)では \b は使えない(多くの環境でバックスペース扱い)ので、ポート番号の
+# 後ろが「数字以外 or 行末」であることで締める([^0-9]|$)。:12718 等への誤マッチを防ぐ。
+ss -tlnp | grep -E ':(2718|3017|3021|3025)([^0-9]|$)'  # 例: 0.0.0.0:2718 と 0.0.0.0:30XX
 ```
 
 ブラウザで `http://localhost:2718/?view-as=present` を開く。app view(コード非表示)で
@@ -134,9 +136,9 @@ kubectl -n marimo logs deploy/marimo-nb2 -c acp-agent
 
 # ホスト側ポート(80 と 3017 が両方 LISTEN しているはず)
 # ss の Local Address は "0.0.0.0:80" のような形式で続いて空白+次列が来る。
-# `:80 ` のようなパターンだと環境差で取りこぼすので、:80 の後ろが「数字でない」
-# = 数字境界 (\b) で締めるパターンが汎用的。
-ss -tlnp | grep -E ':80\b|:3017\b'
+# grep -E(ERE)では \b は使えないため、ポート番号の後ろが「数字以外 or 行末」
+# ([^0-9]|$)であることで締める。:800 や :8017 等への誤マッチを防ぐ。
+ss -tlnp | grep -E ':(80|3017)([^0-9]|$)'
 
 # nip.io 解決確認(LAN_IP は IPv4 のみ抽出。docker bridge 等を除外)
 LAN_IP=${LAN_IP:-$(hostname -I 2>/dev/null | tr ' ' '\n' \
@@ -205,7 +207,7 @@ Copilot CLI の ACP モードで permission service が遅延初期化される(
 ### Step 4: ブラウザは `nbN.*.nip.io/` 開けるがエージェントが繋がらない
 - ブラウザの開発者ツール → Network → WS で `ws://nbN.<LAN_IP>.nip.io:3017/message` を見る(本構成は平文HTTP/WSなので `ws://`。TLS化時のみ `wss://`)
 - 404: nginx の :3017 リスナーで Hostヘッダがマッチしていない可能性 → `kubectl --context kind-marimo -n marimo logs deploy/nginx-gateway` で `404` ログを確認、`server_name` の正規表現が `nbN\..+\.nip\.io` の形にマッチしているか
-- 接続失敗: nginx Pod が落ちているか、ホスト側 :3017 が開いていない → `kubectl --context kind-marimo -n marimo get pods`, `ss -tlnp | grep -E ':3017\b'`
+- 接続失敗: nginx Pod が落ちているか、ホスト側 :3017 が開いていない → `kubectl --context kind-marimo -n marimo get pods`, `ss -tlnp | grep -E ':3017([^0-9]|$)'`
 
 ### Pod が CrashLoopBackOff になる
 

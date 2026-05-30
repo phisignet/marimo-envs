@@ -134,7 +134,7 @@ marimo UI を開いたら:
 1. **Settings → Lab → "agents" を有効化**(初回のみ。ブラウザ側設定)
 2. 左サイドバーのエージェントアイコン
 3. `--agent` で起動したものを選ぶ(**claude→Claude / codex→Codex / copilot→Cursor**)
-4. ブラウザは `ws://<同じホスト>:<port>/message` に自動接続(`<port>` は claude=3017 / codex=3021 / copilot=3025)
+4. ブラウザは `ws(s)://<同じホスト>:<port>/message` に自動接続(HTTP=ws / TLS化時=wss。`<port>` は claude=3017 / codex=3021 / copilot=3025)
 
 > 起動後の操作(エージェントとの協働・marimo-pair・Copilot のモード・事前導入
 > パッケージなど)は **[docs/USAGE.md](docs/USAGE.md)** を参照。
