@@ -103,8 +103,9 @@ kubectl -n marimo logs deploy/marimo -c marimo
 # ACPサイドカーのログ(stdio-to-ws が listen している様子)
 kubectl -n marimo logs deploy/marimo -c acp-agent
 
-# ホスト側でポートが開いているか
-ss -tlnp | grep -E ':2718|:3017'  # LISTEN 0.0.0.0:2718, 0.0.0.0:3017 が見えるはず
+# ホスト側でポートが開いているか(2718=marimo UI + 起動した agent の ACP port)
+# claude=3017 / codex=3021 / copilot=3025。選んだ agent の port が LISTEN していればOK。
+ss -tlnp | grep -E ':2718|:3017|:3021|:3025'  # 例: 0.0.0.0:2718 と 0.0.0.0:30XX
 ```
 
 ブラウザで `http://localhost:2718/?view-as=present` を開く。app view(コード非表示)で
@@ -291,10 +292,10 @@ marimo UI のエージェントパネルで、Claude に「現在のMCPツール
 
 | Step | 内容 | 状態 |
 |---|---|---|
-| 1 | 1人での試用(ACP直接公開: claude=3017 / codex=3021) | ✅ 完了。`scripts/bootstrap.sh --step 1 --agent <claude\|codex>` で再現 |
+| 1 | 1人での試用(ACP直接公開: claude=3017 / codex=3021 / copilot=3025) | ✅ 完了。`scripts/bootstrap.sh --step 1 --agent <claude\|codex\|copilot>` で再現 |
 | 2 | 社内ネットワークでのワイルドカードDNS手配 | (家庭環境では nip.io で代替済み。会社では情シスに相談予定) |
 | 3 | 上司含む2–3人デモ | 未着手 |
-| 4 | 複数ユーザー並列 + nginx Host振り分け(PoC) | ✅ 完了。`scripts/bootstrap.sh --step 4 --agent <claude\|codex>` で再現。`nb1` / `nb2` の2テナントで動作確認済み |
+| 4 | 複数ユーザー並列 + nginx Host振り分け(PoC) | ✅ 完了。`scripts/bootstrap.sh --step 4 --agent <claude\|codex\|copilot>` で再現。`nb1` / `nb2` の2テナントで動作確認済み |
 | 5 | 本番k8s(EKS/GKE/AKS等)へ移行 | 未着手。LoadBalancer / Ingress / TLS / 認証(Basic / OIDC) / 動的テナント発行 |
 
 **Step 4 → Step 5 へ拡張する際の見立て:**

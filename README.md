@@ -115,7 +115,7 @@ docker exec ollama ollama pull gemma4:31b-cloud
 ## 3. 起動
 
 ```bash
-./scripts/bootstrap.sh --step <1|4> --agent <claude|codex>
+./scripts/bootstrap.sh --step <1|4> --agent <claude|codex|copilot>
 ```
 
 完了するとアクセスURLが表示される。
@@ -151,7 +151,7 @@ marimo UI を開いたら:
 | `images/acp-agent/` | Claude Code ACP サイドカー(`@anthropic-ai/claude-code` + `@zed-industries/claude-code-acp`)+ marimo-pair skill |
 | `images/codex-acp/` | Codex ACP サイドカー(`@openai/codex` + `@zed-industries/codex-acp`)+ marimo-pair skill |
 | `images/copilot-acp/` | Copilot CLI ACP サイドカー(`@github/copilot`)+ marimo-pair skill |
-| `images/*/marimo-pair-skill/` | 各イメージへ vendor した marimo-pair skill(SKILL.md + scripts、agent 別 skill dir へ COPY) |
+| `images/{acp-agent,codex-acp,copilot-acp}/marimo-pair-skill/` | 各 ACP イメージへ vendor した marimo-pair skill(SKILL.md + scripts、agent 別 skill dir へ COPY) |
 | `manifests/namespace.yaml` | 専用 namespace `marimo`(全構成共通) |
 | `manifests/step1/base/` | Step 1 共通(marimo Deployment + PVC) |
 | `manifests/step1/{claude,codex,copilot}/` | Step 1 の agent 別 overlay(Kustomize、サイドカー patch + Service) |
