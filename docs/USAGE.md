@@ -32,7 +32,7 @@ ACP サーバーがいないので繋がらない)。
 
 | 起動 `--agent` | UI で選ぶ項目 | ACP port | 備考 |
 |---|---|---|---|
-| `claude` | **Claude** | 3017 | Claude Code(サブスクトークン) |
+| `claude` | **Claude** | 3017 | Claude Code(OAuth トークン `CLAUDE_CODE_OAUTH_TOKEN`、Pro/Max 等サブスク前提) |
 | `codex` | **Codex** | 3021 | Codex CLI + Ollama |
 | `copilot` | **Cursor** | 3025 | Copilot CLI(Cursor 枠を流用。中身は Copilot) |
 
