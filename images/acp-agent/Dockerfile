@@ -18,6 +18,8 @@ RUN apt-get update \
         git \
         ca-certificates \
         tini \
+        curl \
+        jq \
  && rm -rf /var/lib/apt/lists/*
 
 # ACPスタックを事前インストール(起動時の npx ネットワーク取得を回避)。
@@ -38,6 +40,13 @@ RUN npm install -g \
 # node ユーザー(uid 1000)で動かすため、所有権を合わせてコピーする。
 COPY --chown=node:node entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# marimo-pair skill を Claude Code の user スコープ skill ディレクトリへ配置。
+# claude-code-acp は settingSources:["user","project","local"] で skill をロードするため
+# /home/node/.claude/skills/ に置けばブラウザ ACP チャットからも利用可能になる。
+# スキルは scripts/vendor-marimo-pair.sh で pin 取得済み(.vendored-version 参照)。
+# curl/jq は execute-code.sh が marimo の HTTP API を叩くのに必要(上の apt で導入済)。
+COPY --chown=node:node marimo-pair-skill /home/node/.claude/skills/marimo-pair
 
 USER node
 WORKDIR /workspace

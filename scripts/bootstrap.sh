@@ -311,11 +311,11 @@ case "$STEP" in
             copilot) agent_port=3025; agent_ui_label="Cursor" ;;
         esac
         echo " このマシンから:"
-        echo "   http://localhost:2718/"
+        echo "   http://localhost:2718/?view-as=present"
         if [[ -n "$lan_ip" ]]; then
             echo
             echo " 同じLAN上の他PCから:"
-            echo "   http://${lan_ip}:2718/"
+            echo "   http://${lan_ip}:2718/?view-as=present"
         fi
         echo
         echo " marimo UI で:"
@@ -331,8 +331,8 @@ case "$STEP" in
     4)
         if [[ -n "$lan_ip" ]]; then
             echo " アクセスURL(同じLAN上のどの端末からでも):"
-            echo "   nb1: http://nb1.${lan_ip}.nip.io/"
-            echo "   nb2: http://nb2.${lan_ip}.nip.io/"
+            echo "   nb1: http://nb1.${lan_ip}.nip.io/?view-as=present"
+            echo "   nb2: http://nb2.${lan_ip}.nip.io/?view-as=present"
         else
             echo " LAN IP の自動推測に失敗。nip.io 用に LAN_IP env を明示指定してください。"
         fi
