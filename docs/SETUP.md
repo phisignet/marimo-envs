@@ -107,7 +107,14 @@ kubectl -n marimo logs deploy/marimo -c acp-agent
 ss -tlnp | grep -E ':2718|:3017'  # LISTEN 0.0.0.0:2718, 0.0.0.0:3017 が見えるはず
 ```
 
-ブラウザで `http://localhost:2718/` を開く。Lab フラグを有効化してエージェントパネルを開き、Claude を選択。WSが繋がると「接続OK」状態になり、メッセージが送れる。
+ブラウザで `http://localhost:2718/?view-as=present` を開く。app view(コード非表示)で
+ノートブックが開けば OK(初回は `/workspace/notebook.py` が自動生成される)。Lab フラグを
+有効化してエージェントパネルを開き、起動した agent を選択(claude→Claude / codex→Codex /
+copilot→Cursor)。WSが繋がると「接続OK」状態になり、メッセージが送れる。
+
+エージェントに「セルを1つ追加して」等を依頼し、app view に即座に反映されれば
+`--watch`/autorun・marimo-pair が機能している。起動後の使い方の詳細は
+[USAGE.md](USAGE.md) を参照。
 
 ### 4-B. 動作確認(Step 4)
 
@@ -147,6 +154,27 @@ curl -sS -o /dev/null -w '%{http_code}\n' "http://nb2.${LAN_IP}.nip.io/"
 ブラウザで `http://nb1.<LAN_IP>.nip.io/` を開く。エージェント有効化後、Networkタブで `ws://nb1.<LAN_IP>.nip.io:3017/message` が確立されることを確認(本構成は平文HTTP/WSなので `ws://`。Step 5 で TLS 導入時は `wss://` に変わる)。同じ手順で nb2 も別の独立した環境として開ける。
 
 ## トラブルシューティング
+
+### Copilot で Autopilot モードにするとエラーになる
+
+Copilot のチャットで **Autopilot をいきなり選ぶと** 失敗する:
+
+```
+{"details":"Permission service is unavailable for this session."} (code: -32603)
+```
+
+Copilot CLI の ACP モードで permission service が遅延初期化される(初回のツール権限
+チェック時に生成)ことに起因する既知の挙動。Pod 設定の問題ではない。
+
+**回避策(フラグ不要):**
+1. まず **Agent モードで一度やり取り**する(ツール実行を1回走らせて permission
+   service を初期化)。
+2. その後 **Autopilot に切り替える**と成功する(Agent モードの承認はそのまま残る)。
+
+全自動運用(human-in-the-loop なし)が必要なら、`images/copilot-acp/entrypoint.sh` の
+`copilot` コマンドに `--yolo`(=`--allow-all`)を付けると起動時から autopilot 相当に
+できるが、**全モードで承認が一切なくなる**(シェル・ファイル書込含む)ため、Step 4
+複数人環境では危険。常用は非推奨。詳細は [USAGE.md](USAGE.md) §6。
 
 ### marimo UI は開けるがエージェントが繋がらない
 

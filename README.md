@@ -124,14 +124,20 @@ docker exec ollama ollama pull gemma4:31b-cloud
 
 | Step | URL |
 |---|---|
-| Step 1 | `http://localhost:2718/` または `http://<LAN_IP>:2718/` |
-| Step 4 | `http://nb1.<LAN_IP>.nip.io/` / `http://nb2.<LAN_IP>.nip.io/` |
+| Step 1 | `http://localhost:2718/?view-as=present` または `http://<LAN_IP>:2718/?view-as=present` |
+| Step 4 | `http://nb1.<LAN_IP>.nip.io/` / `http://nb2.<LAN_IP>.nip.io/`(`/` は自動で `?view-as=present` にリダイレクト) |
+
+`?view-as=present` で app view(コード非表示・出力のみ)で開く。初回は
+`/workspace/notebook.py` が無ければ自動生成されるので、すぐに作業を始められる。
 
 marimo UI を開いたら:
 1. **Settings → Lab → "agents" を有効化**(初回のみ。ブラウザ側設定)
 2. 左サイドバーのエージェントアイコン
-3. **Claude / Codex** を選択(`--agent` で起動したものを選ぶ)
-4. ブラウザは `ws://<同じホスト>:<port>/message` に自動接続(`<port>` は claude=3017 / codex=3021)
+3. `--agent` で起動したものを選ぶ(**claude→Claude / codex→Codex / copilot→Cursor**)
+4. ブラウザは `ws://<同じホスト>:<port>/message` に自動接続(`<port>` は claude=3017 / codex=3021 / copilot=3025)
+
+> 起動後の操作(エージェントとの協働・marimo-pair・Copilot のモード・事前導入
+> パッケージなど)は **[docs/USAGE.md](docs/USAGE.md)** を参照。
 
 ---
 
@@ -141,10 +147,11 @@ marimo UI を開いたら:
 |---|---|
 | `kind/cluster-step1.yaml` | Step 1 用 kind 設定(2718 + 3017 + 3021 + 3025 を LAN bind) |
 | `kind/cluster-step4.yaml` | Step 4 用 kind 設定(80 + 3017 + 3021 + 3025 を LAN bind) |
-| `images/marimo/Dockerfile` | marimo 公式 + `marimo[mcp]` extras + `external_agents` 初期有効化 |
-| `images/acp-agent/` | Claude Code ACP サイドカー(`@anthropic-ai/claude-code` + `@zed-industries/claude-code-acp`) |
-| `images/codex-acp/` | Codex ACP サイドカー(`@openai/codex` + `@zed-industries/codex-acp`) |
-| `images/copilot-acp/` | Copilot CLI ACP サイドカー(`@github/copilot`) |
+| `images/marimo/Dockerfile` | marimo 公式 + `marimo[mcp]` extras + `external_agents` 初期有効化 + 分析パッケージ事前導入 + app view 用ノートブック自動起動(`--watch`/autorun) |
+| `images/acp-agent/` | Claude Code ACP サイドカー(`@anthropic-ai/claude-code` + `@zed-industries/claude-code-acp`)+ marimo-pair skill |
+| `images/codex-acp/` | Codex ACP サイドカー(`@openai/codex` + `@zed-industries/codex-acp`)+ marimo-pair skill |
+| `images/copilot-acp/` | Copilot CLI ACP サイドカー(`@github/copilot`)+ marimo-pair skill |
+| `images/*/marimo-pair-skill/` | 各イメージへ vendor した marimo-pair skill(SKILL.md + scripts、agent 別 skill dir へ COPY) |
 | `manifests/namespace.yaml` | 専用 namespace `marimo`(全構成共通) |
 | `manifests/step1/base/` | Step 1 共通(marimo Deployment + PVC) |
 | `manifests/step1/{claude,codex,copilot}/` | Step 1 の agent 別 overlay(Kustomize、サイドカー patch + Service) |
@@ -154,6 +161,8 @@ marimo UI を開いたら:
 | `scripts/install-tools.sh` | kind/kubectl の sudo なしインストール |
 | `scripts/lib/common.sh` | 共通関数(LAN_IP 自動推測、cluster 検証、die、Secret 作成等) |
 | `scripts/lib/ollama.sh` | Ollama `/api/show` → Codex `model.json` 生成 |
+| `scripts/vendor-marimo-pair.sh` | marimo-pair skill を pin tag で各イメージへ vendor(環境固有注記の前置・矛盾セクション除去・サイレント失敗修正を適用) |
+| `docs/USAGE.md` | 起動後の利用ガイド(エージェント協働・marimo-pair・モード・パッケージ) |
 | `docs/SETUP.md` | 詳細手順とトラブルシューティング |
 | `docs/copilot-agent-design.md` | Copilot CLI 統合の設計ドキュメント |
 
