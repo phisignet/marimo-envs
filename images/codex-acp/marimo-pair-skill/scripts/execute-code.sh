@@ -207,4 +207,8 @@ done < <(curl -sN -X POST "${base}/api/kernel/execute" \
   -d "$(jq -n --arg c "$code" '{code: $c}')" \
 )
 
+if [[ "$done_received" == false ]]; then
+  echo "Error: marimo kernel stream ended without a 'done' event (server unreachable, HTTP error, or kernel crash)." >&2
+  exit 1
+fi
 exit "$exit_code"

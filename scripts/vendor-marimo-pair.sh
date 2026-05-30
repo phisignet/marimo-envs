@@ -101,6 +101,36 @@ out = "".join(lines[:insert_at]) + note + "\n" + "".join(lines[insert_at:])
 open(path, "w", encoding="utf-8").write(out)
 PY
 
+    # execute-code.sh のサイレント失敗を修正(ローカルパッチ)。
+    # upstream v0.0.15 では curl が process substitution 内のため set -e で
+    # 失敗が伝播せず、`done` イベントが来ずにストリームが終わっても exit_code=0
+    # のまま成功扱いになる(HTTP エラー / サーバークラッシュ / 接続断時)。
+    # エージェントが失敗を成功と誤認するため、ループ後に done_received を検査して
+    # 受信していなければ非0終了させる。upstream に修正が入ったら不要になる。
+    exec_sh="$dest/scripts/execute-code.sh"
+    python3 - "$exec_sh" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+anchor = 'exit "$exit_code"'
+guard = (
+    'if [[ "$done_received" == false ]]; then\n'
+    '  echo "Error: marimo kernel stream ended without a \'done\' event '
+    '(server unreachable, HTTP error, or kernel crash)." >&2\n'
+    '  exit 1\n'
+    'fi\n'
+)
+if "done_received\" == false ]]; then\n  echo \"Error: marimo kernel stream ended" in text:
+    sys.exit(0)  # 既にパッチ済み
+if anchor not in text:
+    print(f"ERROR: anchor '{anchor}' not found in {path}. upstream の構造変更の可能性。", file=sys.stderr)
+    sys.exit(1)
+# 最後の `exit "$exit_code"` の直前に guard を挿入
+idx = text.rfind(anchor)
+patched = text[:idx] + guard + text[idx:]
+open(path, "w", encoding="utf-8").write(patched)
+PY
+
     # バージョンを記録(再現性の証跡)
     echo "$MARIMO_PAIR_VERSION" > "$dest/.vendored-version"
 done
