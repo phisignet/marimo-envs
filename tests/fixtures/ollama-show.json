@@ -1,0 +1,7 @@
+{
+  "model_info": {
+    "general.architecture": "gemma",
+    "gemma.context_length": 65536
+  },
+  "capabilities": ["completion", "vision"]
+}
