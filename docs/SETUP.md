@@ -114,8 +114,9 @@ ss -tlnp | grep -E ':2718\b|:3017\b|:3021\b|:3025\b'  # 例: 0.0.0.0:2718 と 0.
 copilot→Cursor)。WSが繋がると「接続OK」状態になり、メッセージが送れる。
 
 エージェントに「セルを1つ追加して」等を依頼し、app view に即座に反映されれば
-`--watch`/autorun・marimo-pair が機能している。起動後の使い方の詳細は
-[USAGE.md](USAGE.md) を参照。
+`--watch`/autorun か marimo-pair(code_mode)のどちらか(または両方)が機能している
+(どちらの経路でも即時反映されるため、この確認だけでは両方の動作までは断定できない)。
+起動後の使い方の詳細は [USAGE.md](USAGE.md) を参照。
 
 ### 4-B. 動作確認(Step 4)
 

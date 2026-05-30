@@ -147,7 +147,7 @@ marimo UI を開いたら:
 |---|---|
 | `kind/cluster-step1.yaml` | Step 1 用 kind 設定(2718 + 3017 + 3021 + 3025 を LAN bind) |
 | `kind/cluster-step4.yaml` | Step 4 用 kind 設定(80 + 3017 + 3021 + 3025 を LAN bind) |
-| `images/marimo/Dockerfile` | marimo 公式 + `marimo[mcp]` extras + `external_agents` 初期有効化 + 分析パッケージ事前導入 + app view 用ノートブック自動起動(`--watch`/autorun) |
+| `images/marimo/Dockerfile` | marimo 公式 + `marimo[mcp]` extras + `external_agents` 初期有効化 + 分析パッケージ事前導入 + ノートブック自動起動/自動生成(`MARIMO_NOTEBOOK`)+ 変更の即時反映(`--watch`/autorun) |
 | `images/acp-agent/` | Claude Code ACP サイドカー(`@anthropic-ai/claude-code` + `@zed-industries/claude-code-acp`)+ marimo-pair skill |
 | `images/codex-acp/` | Codex ACP サイドカー(`@openai/codex` + `@zed-industries/codex-acp`)+ marimo-pair skill |
 | `images/copilot-acp/` | Copilot CLI ACP サイドカー(`@github/copilot`)+ marimo-pair skill |
