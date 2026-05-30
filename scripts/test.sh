@@ -11,7 +11,9 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+# このランナーは set -e を使わない(shellcheck/bats を両方最後まで走らせ fail を集約
+# するため)。そのため cd 失敗は明示的にガードする(SC2164)。
+cd "$REPO_ROOT" || exit 1
 
 fail=0
 
