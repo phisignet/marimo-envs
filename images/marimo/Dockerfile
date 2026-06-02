@@ -60,13 +60,20 @@ USER appuser
 
 # 初期 marimo user config を焼き込み:
 #   [experimental] external_agents = true
-# ブラウザの Settings → Lab で毎回手動で有効化する手間を省く。
+#     ブラウザの Settings → Lab で毎回手動で有効化する手間を省く。
+#   [runtime] watcher_on_save = "autorun"
+#     ファイル変更を検知して該当セルを自動実行(--watch と併用)。
+#   [sharing] html = false / wasm = false
+#     ノートブックを外部(static.marimo.app / WASM / molab)へ公開する UI を隠す。
+#     publish/share はブラウザから外部へ直接送信される=社内データ漏洩経路になるため、
+#     社内展開のデフォルトとして無効化(marimo 公式の SharingConfig)。
+#     必要になったら該当行を true に戻す or marimo.toml で上書きする。
 # パスは marimo 0.23.8 の `marimo config show` で実機確認した
 # /home/appuser/.config/marimo/marimo.toml(=$HOME/.config/marimo/marimo.toml)。
 # ファイル所有を appuser にして、ランタイムでの追加設定変更(他フラグ等)も
 # marimo が同じファイルに書き戻せるようにする(read-write のままにする)。
 RUN mkdir -p /home/appuser/.config/marimo \
- && printf '[experimental]\nexternal_agents = true\n\n[runtime]\nwatcher_on_save = "autorun"\n' \
+ && printf '[experimental]\nexternal_agents = true\n\n[runtime]\nwatcher_on_save = "autorun"\n\n[sharing]\nhtml = false\nwasm = false\n' \
         > /home/appuser/.config/marimo/marimo.toml
 
 # 公式CMDは:

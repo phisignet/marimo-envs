@@ -291,6 +291,30 @@ marimo UI のエージェントパネルで、Claude に「現在のMCPツール
 
 不特定多数からアクセスされる環境では、本構成を絶対に使わないこと。
 
+### Web 公開(share/publish)機能の無効化
+
+marimo の UI には「Publish HTML to web」「Create WebAssembly link」「Create molab
+notebook」といった**ノートブックを外部サービスへ公開**する操作がある。これらは
+**marimo サーバ経由ではなくブラウザから外部(`static.marimo.app` / `wasm.marimo.app`
+/ `molab.marimo.io`)へ直接送信**されるため、Pod のネットワーク制御では止められない
+=社内データ漏洩経路になりうる。
+
+そこで marimo 公式の `[sharing]` 設定で UI ごと無効化している(`images/marimo/Dockerfile`
+の marimo.toml に焼き込み済み):
+
+```toml
+[sharing]
+html = false   # "Publish HTML to web" を隠す
+wasm = false   # "Create WebAssembly link" を隠す。両方 false で molab 含む Share 群が全消去
+```
+
+- `marimo config show` で `[sharing] html=false wasm=false` を確認できる。
+- 公開が必要になったら該当行を `true` に戻す。
+- 補足: 「Send feedback」ボタンは残るが、押すと外部リンク(アンケート/GitHub/Discord)へ
+  遷移するだけで自動送信は無く、漏洩リスクは低いため無効化していない。
+- 標準 AI / GitHub Copilot は config で既定 off(`[ai.models]` 空・`completion.copilot=false`)
+  なので、外部 LLM への送信経路も既定で閉じている。
+
 ## 今後のステップ(プロジェクトロードマップ)
 
 | Step | 内容 | 状態 |
