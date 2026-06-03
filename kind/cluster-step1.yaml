@@ -1,57 +1,24 @@
-# kind クラスタ設定 — Step 1(1人用、全 agent 対応)。
+# kind クラスタ設定 — Step 1(1人用)。
 #
-# Claude (port 3017) / Codex (port 3021) / Copilot (port 3025=Cursor 流用) のどれでも
-# 切替できるよう、3 ACP ポート全部を bind しておく(Pod 側は選んだ agent のポート
-# しか listen しないので余分に open しても通信上の害はない)。これにより
-# bootstrap.sh の --agent 切替時に kind cluster 自体は再作成不要
-# (Service だけ apply し直せばよい)。
+# Model Y: 公開ポートは nginx 前段の :80 のみ。
+# patched marimo(ACP WS を相対パス /[nbN/]acp/<id> に変更済み)により、ACP は
+# :80 経由でパス振り分けされるため、ACP 専用ポート(3017/3021/3025)の bind は不要。
+# Step 1 も nginx 前段(:80)経由になったため、旧 2718 直 bind も廃止。
 #
-# ⚠️ ただし `extraPortMappings` の hostPort が既にホスト側で他プロセスに
-# 使われている場合、未使用予定の側であっても kind create cluster は
-# 「port is already allocated」で失敗する。3 ACP ポート(3017/3021/3025)
-# + marimo (2718) が空いていることが前提。回避策:
-#   - 使わない agent のポートを bind する extraPortMappings エントリを
-#     削除して使う(限定 agent 運用になり、他 agent への切替時は
-#     teardown → 再作成が必要)
-#   - もしくはホスト側の競合プロセスを停止 / ポート変更する
+# ⚠️ ホスト :80 が他プロセスに使われていると kind create cluster が
+# 「port is already allocated」で失敗する。:80 を空けてから実行すること。
 #
-# Step 4 用設定(kind/cluster-step4.yaml)と分けている理由:
-# - Step 4 はホスト :80 を bind するため、:80 が他用途で使われている環境で
-#   Step 1 ユーザーが共通設定を使うと kind create がいきなり失敗する。
-# - Step 1 では :80 をそもそも使わないので、開けないことで巻き添えを防ぐ。
 # Step 1↔Step 4 の切替は teardown.sh で再作成すること(本リポジトリの方針)。
-#
-# 重要(設計の核心): marimoのACPエージェントは、ブラウザが
-# window.location.hostname:<agent固有port> にハードコードで直結する仕様
-# (`frontend/src/components/chat/acp/state.ts` の getAgentWebSocketUrl)。
-# そのため marimo の UI (2718) と ACP の port を「同一ホスト名/IPで」LAN に
-# 同時公開する必要がある。
+# 注: 現状 step1/step4 の kind 設定は同一(:80 のみ)だが、将来の差分(例: step4 で
+# 追加ポート)に備えて別ファイルのまま保持している。
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: marimo
 nodes:
   - role: control-plane
     extraPortMappings:
-      # marimo UI/サーバWS - ホスト 2718 → ノード(NodePort) 30718
-      - containerPort: 30718
-        hostPort: 2718
-        listenAddress: "0.0.0.0"
-        protocol: TCP
-
-      # ACPエージェント(Claude Code) - ホスト 3017 → ノード(NodePort) 30317
-      - containerPort: 30317
-        hostPort: 3017
-        listenAddress: "0.0.0.0"
-        protocol: TCP
-
-      # ACPエージェント(Codex CLI) - ホスト 3021 → ノード(NodePort) 30321
-      - containerPort: 30321
-        hostPort: 3021
-        listenAddress: "0.0.0.0"
-        protocol: TCP
-
-      # ACPエージェント(Copilot CLI、Cursor port 3025 を流用) - ホスト 3025 → ノード 30325
-      - containerPort: 30325
-        hostPort: 3025
+      # nginx 前段の HTTP/WS(marimo UI + ACP) - ホスト 80 → ノード(NodePort) 30080
+      - containerPort: 30080
+        hostPort: 80
         listenAddress: "0.0.0.0"
         protocol: TCP

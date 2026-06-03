@@ -1,28 +1,25 @@
-# Step 1 / claude Service: marimo UI と Claude ACP を同一ホストで外に出す。
+# Step 1 / claude Service(ClusterIP)。
 #
-# 設計の核心: marimoブラウザJSが ACP WebSocket URL を
-# `ws://${window.location.hostname}:3017/message` でハードコード(Claude 固定 port)。
-# 結果として「同じホスト」の 2718 と 3017 を NodePort で並べる必要がある。
-#
-# kind 側の extraPortMappings (kind/cluster-step1.yaml の 30718 / 30317) と
-# nodePort 値を一致させること。
+# Model Y: marimo と ACP は nginx-gateway 経由でのみ触るため内部 Service で十分。
+# 外部公開は nginx-gateway(:80 NodePort 30080)が担う。
+# - marimo:2718  → marimo UI / 自身の WS
+# - acp:3017     → Claude ACP サイドカー(stdio-to-ws /message)
+# patched marimo によりフロントは ws(s)://<host>/acp/<id> へ繋ぐ(固定ポート直結は廃止)。
 apiVersion: v1
 kind: Service
 metadata:
   name: marimo
   namespace: marimo
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: marimo
   ports:
     - name: marimo
       port: 2718
       targetPort: marimo
-      nodePort: 30718
       protocol: TCP
     - name: acp
       port: 3017
       targetPort: acp
-      nodePort: 30317
       protocol: TCP

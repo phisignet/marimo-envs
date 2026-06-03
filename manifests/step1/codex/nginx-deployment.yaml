@@ -1,6 +1,6 @@
-# nginx 前段 Pod。Model Y: 唯一の公開ポート :80(NodePort 30080)。
-# path prefix /nbN/ で各テナントへ振り分ける(設定は nginx-configmap.yaml)。
-# ACP 専用ポートは廃止(ACP は /nbN/acp/<id> を :80 経由で中継)。
+# Step 1 / nginx-gateway: 唯一の公開ポート :80。
+# marimo(:2718)と ACP サイドカー(:<port>)を同一オリジンに束ね、パスで振り分ける
+# (Model Y)。設定は nginx-configmap.yaml をマウント。
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -17,7 +17,6 @@ spec:
     spec:
       containers:
         - name: nginx
-          # patch まで固定して再現性確保。上げる時は実機で `nginx -v` 確認。
           image: nginx:1.27.5-alpine
           ports:
             - {name: http, containerPort: 80, protocol: TCP}

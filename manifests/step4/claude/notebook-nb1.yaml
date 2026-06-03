@@ -1,8 +1,8 @@
 # notebook 環境 #1 (nb1) - PVC + Deployment + Service の1セット。
 # nb2.yaml は本ファイルの "nb1" を "nb2" に置換しただけのコピー。
 #
-# Step 4 では nginx が Hostヘッダ nb1.<IP>.nip.io / nb2.<IP>.nip.io で
-# それぞれの Service に振り分ける。
+# Model Y: nginx が path prefix /nb1/ で各テナントへ振り分ける(nip.io 廃止)。
+# marimo は --base-url /nb1(MARIMO_BASE_URL)で /nb1/ 配下に配信される。
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -41,12 +41,14 @@ spec:
               value: "2718"
             - name: HOST
               value: "0.0.0.0"
+            - name: MARIMO_BASE_URL   # /nb1 配下に配信(Model Y path-prefix)
+              value: "/nb1"
           ports:
             - {name: marimo, containerPort: 2718, protocol: TCP}
           volumeMounts:
             - {name: workspace, mountPath: /workspace}
           readinessProbe:
-            httpGet: {path: /healthz, port: marimo}
+            httpGet: {path: /nb1/healthz, port: marimo}
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 6
@@ -66,6 +68,9 @@ spec:
                   key: token
             - name: DISABLE_AUTOUPDATER
               value: "1"
+            # base-url 配下では MCP も /nb1/mcp/server になるため登録先を合わせる
+            - name: MARIMO_MCP_URL
+              value: "http://localhost:2718/nb1/mcp/server"
           ports:
             - {name: acp, containerPort: 3017, protocol: TCP}
           volumeMounts:
