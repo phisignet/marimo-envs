@@ -27,6 +27,32 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# ----- .env 自動読込(任意) -----
+# REPO_ROOT/.env があれば KEY=VALUE 形式でトークン等を読み込む(.gitignore 済み・
+# コミット対象外)。毎回 `export` しなくても済むようにするのが目的。
+# 既に export 済みの変数は上書きしない(コマンドラインでの明示指定を優先)。
+# 値の囲みクォート(" または ')と前後空白、行頭 `export ` は除去する。
+if [[ -f "$REPO_ROOT/.env" ]]; then
+    echo "[=] .env を読み込み: $REPO_ROOT/.env"
+    while IFS='=' read -r raw_key raw_val; do
+        # コメント行・空行・`=` を含まない行はスキップ
+        [[ "$raw_key" =~ ^[[:space:]]*# ]] && continue
+        key="${raw_key#export }"
+        key="${key//[[:space:]]/}"
+        [[ -z "$key" ]] && continue
+        # 既に環境にあれば尊重(.env では上書きしない)
+        [[ -n "${!key:-}" ]] && continue
+        # 前後空白を除去
+        val="${raw_val#"${raw_val%%[![:space:]]*}"}"
+        val="${val%"${val##*[![:space:]]}"}"
+        # 囲みクォート除去(" または ')
+        if [[ "$val" == \"*\" || "$val" == \'*\' ]]; then
+            val="${val:1:${#val}-2}"
+        fi
+        export "$key=$val"
+    done < "$REPO_ROOT/.env"
+fi
+
 # shellcheck source=scripts/lib/common.sh
 source "$REPO_ROOT/scripts/lib/common.sh"
 # shellcheck source=scripts/lib/ollama.sh

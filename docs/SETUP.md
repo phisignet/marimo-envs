@@ -52,6 +52,23 @@ claude setup-token
 > 履歴に env 値が残るので、**普通のターミナル**で `export` または1回のコマンドの
 > 前置きとして実行すること。
 
+### 3-0. `.env` でトークンを渡す(任意・推奨)
+
+毎回 `export` する代わりに、リポジトリ直下の `.env` に書いておけば
+`bootstrap.sh` が起動時に自動読込する(`.env` は `.gitignore` 済み=コミットされない)。
+
+```bash
+cp .env.example .env
+# .env を編集して使う agent のトークンを記入(例: COPILOT_GITHUB_TOKEN=github_pat_xxx)
+./scripts/bootstrap.sh --step 1 --agent copilot   # export 不要
+```
+
+- 既に `export` 済みの環境変数があればそちらを優先(`.env` では上書きしない)。
+- 値の囲みクォート(`"..."` / `'...'`)あり/なしどちらでも可。
+- 記入できる変数の一覧と説明は [`.env.example`](../.env.example) を参照。
+
+以降の 3-A / 3-B では `export ...` を例示するが、`.env` に書いた場合はその行は不要。
+
 ### 3-A. デプロイ実行(Step 1: 1人)
 
 ```bash
