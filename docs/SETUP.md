@@ -169,7 +169,10 @@ curl -sS -L -o /dev/null -w '%{http_code}\n' "http://localhost/nb2/?view-as=pres
 
 ### Copilot で Autopilot モードにするとエラーになる
 
-Copilot のチャットで **Autopilot をいきなり選ぶと** 失敗する:
+> 既定で `--allow-all`(yolo)起動になったため、本症状は通常発生しない。承認モード
+> に戻している場合のみ該当する(下記)。
+
+承認モード(`COPILOT_DISABLE_YOLO=1`)で **Autopilot をいきなり選ぶと** 失敗する:
 
 ```
 {"details":"Permission service is unavailable for this session."} (code: -32603)
@@ -178,15 +181,13 @@ Copilot のチャットで **Autopilot をいきなり選ぶと** 失敗する:
 Copilot CLI の ACP モードで permission service が遅延初期化される(初回のツール権限
 チェック時に生成)ことに起因する既知の挙動。Pod 設定の問題ではない。
 
-**回避策(フラグ不要):**
-1. まず **Agent モードで一度やり取り**する(ツール実行を1回走らせて permission
-   service を初期化)。
-2. その後 **Autopilot に切り替える**と成功する(Agent モードの承認はそのまま残る)。
+**回避策(2つ):**
+- **A. yolo に戻す(既定運用):** `COPILOT_DISABLE_YOLO` env を外して Pod を再起動。
+  yolo モードでは permission service 自体が走らないので根本回避。
+- **B. 承認モードのまま使う場合:** まず Agent モードで 1 回やり取りして permission
+  service を初期化 → Autopilot に切り替える(Agent モードの承認はそのまま残る)。
 
-全自動運用(human-in-the-loop なし)が必要なら、`images/copilot-acp/entrypoint.sh` の
-`copilot` コマンドに `--yolo`(=`--allow-all`)を付けると起動時から autopilot 相当に
-できるが、**全モードで承認が一切なくなる**(シェル・ファイル書込含む)ため、Step 4
-複数人環境では危険。常用は非推奨。詳細は [USAGE.md](USAGE.md) §6。
+yolo (`--allow-all`)の作業効率/危険性トレードオフは [USAGE.md](USAGE.md) §6 を参照。
 
 ### marimo UI は開けるがエージェントが繋がらない
 
