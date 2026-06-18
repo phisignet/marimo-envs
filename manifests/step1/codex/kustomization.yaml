@@ -12,6 +12,8 @@ namespace: marimo
 resources:
   - ../base
   - service.yaml
+  - nginx-configmap.yaml
+  - nginx-deployment.yaml
 
 patches:
   - path: acp-patch.yaml

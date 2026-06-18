@@ -1,8 +1,8 @@
 # notebook 環境 #2 (nb2, Codex+Ollama) — PVC + Deployment + Service の1セット。
 # 内容は notebook-nb1.yaml と同型(`sed 's/nb1/nb2/g'` で生成可能)。
 #
-# Step 4 では nginx が Hostヘッダ nb1.<IP>.nip.io / nb2.<IP>.nip.io で
-# それぞれの Service に振り分ける。Codex 版は port 3021、acp は codex-acp、
+# Model Y: nginx が path prefix /nb2/ で各テナントへ振り分ける(nip.io 廃止)。
+# marimo は --base-url /nb2(MARIMO_BASE_URL)で /nb2/ 配下に配信される。Codex 版は port 3021、acp は codex-acp、
 # 認証情報は ConfigMap codex-config(OLLAMA_BASE_URL / CODEX_MODEL)経由。
 # codex-catalog ConfigMap は bootstrap.sh が Ollama /api/show から動的生成。
 ---
@@ -43,12 +43,14 @@ spec:
               value: "2718"
             - name: HOST
               value: "0.0.0.0"
+            - name: MARIMO_BASE_URL   # /nb2 配下に配信(Model Y path-prefix)
+              value: "/nb2"
           ports:
             - {name: marimo, containerPort: 2718, protocol: TCP}
           volumeMounts:
             - {name: workspace, mountPath: /workspace}
           readinessProbe:
-            httpGet: {path: /healthz, port: marimo}
+            httpGet: {path: /nb2/healthz, port: marimo}
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 6

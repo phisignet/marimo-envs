@@ -27,6 +27,32 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# ----- .env 自動読込(任意) -----
+# REPO_ROOT/.env があれば KEY=VALUE 形式でトークン等を読み込む(.gitignore 済み・
+# コミット対象外)。毎回 `export` しなくても済むようにするのが目的。
+# 既に export 済みの変数は上書きしない(コマンドラインでの明示指定を優先)。
+# 値の囲みクォート(" または ')と前後空白、行頭 `export ` は除去する。
+if [[ -f "$REPO_ROOT/.env" ]]; then
+    echo "[=] .env を読み込み: $REPO_ROOT/.env"
+    while IFS='=' read -r raw_key raw_val; do
+        # コメント行・空行・`=` を含まない行はスキップ
+        [[ "$raw_key" =~ ^[[:space:]]*# ]] && continue
+        key="${raw_key#export }"
+        key="${key//[[:space:]]/}"
+        [[ -z "$key" ]] && continue
+        # 既に環境にあれば尊重(.env では上書きしない)
+        [[ -n "${!key:-}" ]] && continue
+        # 前後空白を除去
+        val="${raw_val#"${raw_val%%[![:space:]]*}"}"
+        val="${val%"${val##*[![:space:]]}"}"
+        # 囲みクォート除去(" または ')
+        if [[ "$val" == \"*\" || "$val" == \'*\' ]]; then
+            val="${val:1:${#val}-2}"
+        fi
+        export "$key=$val"
+    done < "$REPO_ROOT/.env"
+fi
+
 # shellcheck source=scripts/lib/common.sh
 source "$REPO_ROOT/scripts/lib/common.sh"
 # shellcheck source=scripts/lib/ollama.sh
@@ -153,11 +179,11 @@ esac
 
 # ----- kind クラスタ作成/検証 -----
 # required_ports は kind/cluster-step*.yaml の extraPortMappings と一致させる。
-# 全 agent の ACP port (3017/3021/3025) を同時 bind しておくことで、Step 内での
-# agent 切替時に kind cluster 再作成が不要になる。
+# Model Y: 公開は nginx 前段の :80(NodePort 30080)のみ。ACP は :80 経由でパス
+# 振り分けされるため、ACP 専用ポートの bind は不要になった。
 case "$STEP" in
-    1) cluster_config="kind/cluster-step1.yaml"; required_ports=(30718 30317 30321 30325) ;;
-    4) cluster_config="kind/cluster-step4.yaml"; required_ports=(30080 30317 30321 30325) ;;
+    1) cluster_config="kind/cluster-step1.yaml"; required_ports=(30080) ;;
+    4) cluster_config="kind/cluster-step4.yaml"; required_ports=(30080) ;;
 esac
 
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
@@ -168,25 +194,12 @@ else
     kind create cluster --name "$CLUSTER_NAME" --config "$cluster_config"
 fi
 
-# ----- agent別 NodePort 競合の事前検知 -----
+# ----- NodePort 競合の事前検知 -----
 # Step/agent 切替時に既存 Service が新構成と同じ nodePort を握っていると
 # `kubectl apply` が「port is already allocated」で落ちる。kubectl のエラーは
-# どの Service が握っているか分かりにくいので、early に check して
-# teardown を促す。
-#   Step 1: Service marimo が nodePort を直接握る(marimo UI 30718 + agent別 ACP port)
-#   Step 4: nginx-gateway が複数 nodePort を集約(http 30080 + agent別 ACP port)
-case "$AGENT" in
-    claude)  acp_node_port=30317 ;;
-    codex)   acp_node_port=30321 ;;
-    copilot) acp_node_port=30325 ;;
-esac
-case "$STEP" in
-    1) allowed_service_name="marimo";        node_ports=(30718 "$acp_node_port") ;;
-    4) allowed_service_name="nginx-gateway"; node_ports=(30080 "$acp_node_port") ;;
-esac
-for node_port in "${node_ports[@]}"; do
-    check_nodeport_conflict "$KUBE_CONTEXT" "$NAMESPACE" "$node_port" "$allowed_service_name"
-done
+# どの Service が握っているか分かりにくいので、early に check して teardown を促す。
+# Model Y: Step1/Step4 とも nginx-gateway が唯一の NodePort(30080)を握る。
+check_nodeport_conflict "$KUBE_CONTEXT" "$NAMESPACE" 30080 "nginx-gateway"
 
 # ----- カスタムイメージ build & kind load -----
 # image タグは「マニフェストを唯一の真の情報源」とし、bootstrap が build/load する
@@ -298,24 +311,22 @@ echo
 echo "===================================================================="
 echo " marimo + ${AGENT} ACP は起動しました (Step ${STEP})."
 echo
+# agent_ui_label は marimo UI のドロップダウン表示と完全一致させる。
+# copilot は AGENT_CONFIG で Cursor 用枠(port 3025)を流用するため UI 上は「Cursor」。
+case "$AGENT" in
+    claude)  agent_ui_label="Claude" ;;
+    codex)   agent_ui_label="Codex" ;;
+    copilot) agent_ui_label="Cursor" ;;
+esac
 case "$STEP" in
     1)
-        # agent_ui_label は marimo UI のドロップダウンに表示される文字列と完全一致させる
-        # (補足説明は別行で出す。文字列に括弧で説明を入れるとユーザーが選択肢を
-        #  見つけられなくなる)。copilot は marimo の AGENT_CONFIG で Cursor 用
-        # port 3025 を流用するため、UI 上は「Cursor」と表示される(中身は Copilot CLI、
-        # 設計ドキュメント参照)。
-        case "$AGENT" in
-            claude)  agent_port=3017; agent_ui_label="Claude" ;;
-            codex)   agent_port=3021; agent_ui_label="Codex" ;;
-            copilot) agent_port=3025; agent_ui_label="Cursor" ;;
-        esac
+        # Model Y: nginx 前段 :80 経由で marimo を root 配信。ACP は /acp/<id> を :80 で中継。
         echo " このマシンから:"
-        echo "   http://localhost:2718/?view-as=present"
+        echo "   http://localhost/?view-as=present"
         if [[ -n "$lan_ip" ]]; then
             echo
             echo " 同じLAN上の他PCから:"
-            echo "   http://${lan_ip}:2718/?view-as=present"
+            echo "   http://${lan_ip}/?view-as=present"
         fi
         echo
         echo " marimo UI で:"
@@ -326,16 +337,18 @@ case "$STEP" in
             echo "      (本リポジトリは Cursor 枠で Copilot CLI を動かしているため、"
             echo "       UI 上は \"Cursor\" と表示されます)"
         fi
-        echo "   4. ブラウザは ws://<同じホスト>:${agent_port}/message に自動接続"
+        echo "   4. ブラウザは ws(s)://<同じホスト>/acp/<id> に自動接続(:80 経由・固定ポート不要)"
         ;;
     4)
-        if [[ -n "$lan_ip" ]]; then
-            echo " アクセスURL(同じLAN上のどの端末からでも):"
-            echo "   nb1: http://nb1.${lan_ip}.nip.io/?view-as=present"
-            echo "   nb2: http://nb2.${lan_ip}.nip.io/?view-as=present"
-        else
-            echo " LAN IP の自動推測に失敗。nip.io 用に LAN_IP env を明示指定してください。"
-        fi
+        # Model Y: path-prefix /nbN/ でテナント分離(nip.io 廃止・単一ホスト/IP)。
+        host="${lan_ip:-localhost}"
+        echo " アクセスURL(同じLAN上のどの端末からでも):"
+        echo "   nb1: http://${host}/nb1/?view-as=present"
+        echo "   nb2: http://${host}/nb2/?view-as=present"
+        [[ -z "$lan_ip" ]] && echo " (LAN IP 自動推測に失敗。他PCから繋ぐ場合は LAN_IP env を指定 or ホストの IP を使用)"
+        echo
+        echo " marimo UI で \"${agent_ui_label}\" を選択(初回のみ Settings → Lab → agents 有効化)。"
+        echo " ブラウザは ws(s)://<host>/nbN/acp/<id> に自動接続(:80 経由・固定ポート/nip.io 不要)。"
         ;;
 esac
 

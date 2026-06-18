@@ -7,14 +7,12 @@
 
 | Step | URL |
 |---|---|
-| Step 1 | `http://localhost:2718/?view-as=present` または `http://<LAN_IP>:2718/?view-as=present` |
-| Step 4 | `http://nb1.<LAN_IP>.nip.io/` / `http://nb2.<LAN_IP>.nip.io/`(`/` は自動で `?view-as=present` にリダイレクト) |
+| Step 1 | `http://localhost/?view-as=present` または `http://<LAN_IP>/?view-as=present` |
+| Step 4 | `http://<LAN_IP>/nb1/?view-as=present` / `http://<LAN_IP>/nb2/?view-as=present`(`/nbN/` は自動で `?view-as=present` にリダイレクト) |
 
+- **Model Y**: 公開は nginx 前段の **:80 のみ**。テナントは path prefix `/nbN/` で分離(nip.io 不要・生 IP でアクセス)。
 - **`?view-as=present` で app view(コード非表示・出力のみ)で開く。** marimo 組み込みの
-  起動パラメータで、ノートブックを「アプリ」として見せる。コードを編集したいときは
-  右上のトグル(Toggle App View)で通常のエディタ表示に切り替えられる。
-- Step 4 は nginx の `:80` listener が `/` を `?view-as=present` にリダイレクトするため、
-  URL にパラメータを付けなくても app view で開く。
+  起動パラメータ。コードを編集したいときは右上のトグル(Toggle App View)で切り替え。
 - bootstrap.sh 完了時の案内 URL にも `?view-as=present` が付与される。
 
 ## 2. ノートブックの初期状態
@@ -27,21 +25,24 @@
 ## 3. エージェントの選択
 
 marimo UI の左サイドバー → エージェントアイコン → ドロップダウンで選ぶ。
-**起動時に `--agent` で指定したものを選ぶこと**(別のものを選んでも対応ポートに
-ACP サーバーがいないので繋がらない)。
+**起動時に `--agent` で指定したものを選ぶこと**(別のものを選んでもそのサイドカーが
+いないので繋がらない)。
 
-| 起動 `--agent` | UI で選ぶ項目 | ACP port | 備考 |
+| 起動 `--agent` | UI で選ぶ項目 | サイドカー内部ポート | 備考 |
 |---|---|---|---|
 | `claude` | **Claude** | 3017 | Claude Code(OAuth トークン `CLAUDE_CODE_OAUTH_TOKEN`、Pro/Max 等サブスク前提) |
 | `codex` | **Codex** | 3021 | Codex CLI + Ollama |
 | `copilot` | **Cursor** | 3025 | Copilot CLI(Cursor 枠を流用。中身は Copilot) |
 
+> 「サイドカー内部ポート」は Pod 内部の話。**Model Y では外部公開されず**、ブラウザは :80
+> 経由のパスで繋ぐ(下記)。
+>
 > 初回のみ **Settings → Lab → "agents" を有効化**(ブラウザ側設定)。本リポジトリの
 > イメージは `external_agents` を焼き込み済みだが、UI 側のフラグは別途必要な場合がある。
 
-WS 接続先はブラウザ JS が `ws(s)://<同じホスト>:<port>/message` でハードコードしている
-(エージェント別固定ポート。ページが HTTP なら `ws`、TLS 化して HTTPS なら `wss`)。
-詳細は README「設計の核心」を参照。
+WS 接続先は patched marimo のフロントが `ws(s)://<同じホスト>/[nbN/]acp/<agentId>` で組み立てる
+(`document.baseURI` 基準。ページが HTTP なら `ws`、TLS なら `wss`)。:80 経由で nginx が
+サイドカーへ中継する。詳細は README「設計の核心」/ [model-y-design.md](model-y-design.md) を参照。
 
 ## 4. エージェントとの協働 — 2つの操作モデル
 
@@ -73,6 +74,10 @@ WS 接続先はブラウザ JS が `ws(s)://<同じホスト>:<port>/message` �
 
 - **接続は内部的に `--url http://localhost:2718` を使う**(別コンテナのため
   サーバー自動検出 = discovery は使えない。焼き込んだ SKILL.md 冒頭に明記済み)。
+  **⚠️ Step 4(Model Y, `--base-url /nbN`)では marimo API が `/nbN/` 配下になるため
+  `--url http://localhost:2718/nbN` が必要**だが、現状の SKILL.md は `:2718`(prefix なし)
+  固定のため **Step 4 の marimo-pair は未対応(既知の制約・別 PR で対応予定)**。
+  Step 1 は影響なし。Step 4 でもファイル編集経由(下記 A)は動作する。
 - できること: セルの作成/編集/削除・実行、`ctx.packages.add()` でのパッケージ追加、
   anywidget によるカスタムウィジェット、変数・型・shape の内省。
 - ガードレール(skill 側で指示済み): ファイル直接編集ではなく `code_mode` を使う、
@@ -85,25 +90,37 @@ Copilot CLI には3つのモードがある(marimo の機能ではなく Copilot
 
 | モード | 挙動 |
 |---|---|
-| **Agent** | 1ターンごとに停止し、ツール実行時に承認を求める(既定運用) |
+| **Agent** | 1ターンごとに停止し、ツール実行時に承認を求める |
 | **Plan** | プランを作成して提示する |
 | **Autopilot** | `task_complete` まで自動継続。全ツール権限を自動承認 |
 
-### ⚠️ Autopilot を使うときの注意
+### ⚠️ 既定で yolo モード(`--allow-all`)で起動する
 
-Autopilot を**いきなり選ぶと** `Permission service is unavailable for this session.`
-(-32603)で失敗する。これは Copilot CLI の ACP モードで permission service が
-遅延初期化される(初回のツール権限チェック時に生成)ことに起因する既知の挙動。
+本リポジトリは作業効率優先で、Copilot サイドカーを **常時 `--allow-all`**(yolo)で
+起動する。これにより:
 
-**回避策(フラグ不要):**
+- ツール実行のたびに出る承認ダイアログが**一切表示されない**(Agent/Plan/Autopilot どのモードでも)
+- 「複数 tool_call で承認 1 個だけ通したあと止まる」現象が起きない
+- Autopilot を選んでも permission service 遅延初期化エラーに当たらない
 
-1. まず **Agent モードで一度やり取り**する(ツール実行を1回走らせる)。
-   → これで permission service が初期化される。
-2. その後 **Autopilot に切り替える**と成功する。Agent モードの承認はそのまま残る。
+⚠️ **代償**として:**シェル実行・任意のファイル書き込み・URL アクセスが完全に無承認**で実行される。
+PoC・1人作業前提なら問題ないが、**複数人で同じ PVC / クラスタを共有する場合は要注意**(他人の
+作業ファイルを誤って上書きするコマンドも承認なしで走る)。
 
-全自動運用(human-in-the-loop なし)が必要なら、Copilot 起動コマンドに `--yolo`
-(=`--allow-all`)を付ける方法もあるが、**全モードで承認が一切なくなる**(シェル・
-ファイル書込含む)ため、複数人共有(Step 4)では危険。常用は非推奨。
+#### yolo を OFF にして承認モードに戻したい場合
+
+サイドカーの env で escape hatch を提供している:
+
+```yaml
+# manifests/step{1,4}/copilot/notebook*.yaml の copilot-acp container に追加
+env:
+  - name: COPILOT_DISABLE_YOLO
+    value: "1"
+```
+
+Pod を再起動すると `[entrypoint] ... (yolo: off (承認モード))` のログが出る。
+この状態では Agent モードで毎ターン承認が必要、Autopilot は遅延初期化エラーに当たる
+(回避策: まず Agent モードで 1 回ツールを走らせて permission service を初期化 → Autopilot に切替)。
 
 ## 7. 事前インストール済みパッケージ
 
@@ -125,8 +142,10 @@ Pod 内で `pip install` する(ランタイムでも書き込めるよう所有
 
 ## 9. 既知の注意
 
-- **Autopilot はいきなり選べない**(§6 の回避策)。
-- marimo-pair の **discovery は使えない**(別コンテナ)。エージェントは常に
-  `--url http://localhost:2718` を使うよう skill で指示済み。
+- **Copilot は既定で yolo (`--allow-all`)起動**。承認ダイアログは出ない代わり、
+  シェル実行・ファイル書込が無承認になる(§6)。OFF にしたい場合は env で切替。
+- marimo-pair の **discovery は使えない**(別コンテナ)。Step 1 は `--url http://localhost:2718`。
+  **Step 4(Model Y)は base-url 配下のため marimo-pair 未対応(§5)**。ファイル編集経由は可。
+- **Model Y**: 公開は :80 のみ・テナントは path `/nbN/`(nip.io 不要)。WS は `/[nbN/]acp/<id>` 経由。
 - 本構成は `--no-token` / 平文 HTTP・WS 前提(信頼ネットワーク内 PoC)。
   セキュリティ前提は SETUP.md「MCP のセキュリティ前提」を参照。

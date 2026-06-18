@@ -4,8 +4,8 @@ marimo の **エージェント機能(Claude Code / Codex CLI + Ollama / GitHub 
 
 | Step | 想定 | 説明 |
 |---|---|---|
-| **Step 1** | 1人で試用 | 1Pod に marimo + ACPサイドカー同居、ポートを LAN に直接公開 |
-| **Step 4** | 同一サーバーで複数人並走 PoC | nginx 前段で Hostヘッダ振り分け + nip.io ワイルドカードDNS |
+| **Step 1** | 1人で試用 | 1Pod に marimo + ACPサイドカー同居、nginx 前段(:80)で root 配信 |
+| **Step 4** | 同一サーバーで複数人並走 PoC | nginx 前段(:80)で path-prefix `/nbN/` 振り分け(Model Y・nip.io 不要) |
 
 | Agent | 推論バックエンド | 認証情報 | ACP port |
 |---|---|---|---|
@@ -52,19 +52,18 @@ export COPILOT_GITHUB_TOKEN='<paste-pat-here>'
 
 ---
 
-## 設計の核心(全構成共通)
+## 設計の核心(全構成共通) — Model Y
 
-marimo のブラウザJSは ACP の WebSocket URL を `ws(s)://${window.location.hostname}:<port>/message` でハードコードする([`frontend/src/components/chat/acp/state.ts`](https://github.com/marimo-team/marimo/blob/main/frontend/src/components/chat/acp/state.ts) の `getAgentWebSocketUrl`)。port は agentId 別に固定:
+marimo 本家のブラウザJSは ACP WebSocket URL を `ws(s)://${hostname}:<agent固有port>/message`(claude=3017 等)で**ハードコード**しており、これが「marimo と ACP を同一ホスト・固定ポートで並べる」制約を生んでいた(旧構成は nip.io や ACP 専用ポート公開でこれを回避していた)。
 
-- Claude Code = **3017**
-- Codex CLI = **3021**
-- Cursor = **3025**(本リポジトリでは Copilot CLI を流用)
-- Gemini = 3019, OpenCode = 3023(未対応)
+本リポジトリは **patched marimo**(`ghcr.io/phisignet/marimo-patched`、`getAgentWebSocketUrl` を相対パス `<base>/acp/<agentId>` に改造)を使うことでこの制約を解消する(契約: [docs/acp-relative-ws-handoff.md](docs/acp-relative-ws-handoff.md))。結果:
 
-そのため marimo (HTTP 2718 or 80) と ACP の port を「**同じホスト名/IP に揃えて**」公開する必要がある。これが本リポジトリ全体の最重要制約。
+- **公開ポートは nginx 前段の :80 のみ**。ACP は `<base>/acp/<id>` を :80 経由でサイドカーの `/message` へ中継。
+- **テナント分離は path prefix**: `marimo --base-url /nbN` で各テナントを `/nbN/` 配下に配信し、nginx がパスで振り分け。**nip.io / ワイルドカード DNS 不要**。
+- Step 1: nginx :80 経由で marimo を root 配信(`/`=marimo、`/acp/<id>`=サイドカー)。
+- Step 4: nginx :80 で `/nbN/`=marimo-nbN、`/nbN/acp/<id>`=nbN サイドカー。アクセスは `http://<LAN_IP>/nbN/`。
 
-- Step 1: 同一 LAN_IP 上に :2718 と :3017/:3021/:3025 を NodePort で並べる
-- Step 4: nginx が :80 と :3017/:3021/:3025 を Listen し、Hostヘッダで Pod を振り分け(`nb1.<IP>.nip.io` / `nb2.<IP>.nip.io`)
+> 詳細設計は [docs/model-y-design.md](docs/model-y-design.md)。上流 marimo-team/marimo#8531 がマージされたら patched イメージは不要になり公式へ戻せる。
 
 ---
 
@@ -124,17 +123,17 @@ docker exec ollama ollama pull gemma4:31b-cloud
 
 | Step | URL |
 |---|---|
-| Step 1 | `http://localhost:2718/?view-as=present` または `http://<LAN_IP>:2718/?view-as=present` |
-| Step 4 | `http://nb1.<LAN_IP>.nip.io/` / `http://nb2.<LAN_IP>.nip.io/`(`/` は自動で `?view-as=present` にリダイレクト) |
+| Step 1 | `http://localhost/?view-as=present` または `http://<LAN_IP>/?view-as=present` |
+| Step 4 | `http://<LAN_IP>/nb1/?view-as=present` / `http://<LAN_IP>/nb2/?view-as=present`(`/nbN/` は自動で `?view-as=present` にリダイレクト) |
 
-`?view-as=present` で app view(コード非表示・出力のみ)で開く。初回は
-`/workspace/notebook.py` が無ければ自動生成されるので、すぐに作業を始められる。
+公開は nginx 前段の **:80 のみ**(nip.io / 固定 ACP ポート不要)。`?view-as=present` で app view
+(コード非表示・出力のみ)で開く。初回は `/workspace/notebook.py` が無ければ自動生成される。
 
 marimo UI を開いたら:
 1. **Settings → Lab → "agents" を有効化**(初回のみ。ブラウザ側設定)
 2. 左サイドバーのエージェントアイコン
 3. `--agent` で起動したものを選ぶ(**claude→Claude / codex→Codex / copilot→Cursor**)
-4. ブラウザは `ws(s)://<同じホスト>:<port>/message` に自動接続(HTTP=ws / TLS化時=wss。`<port>` は claude=3017 / codex=3021 / copilot=3025)
+4. ブラウザは `ws(s)://<同じホスト>/[nbN/]acp/<id>` に自動接続(:80 経由・固定ポート不要。HTTP=ws / TLS化時=wss)
 
 > 起動後の操作(エージェントとの協働・marimo-pair・Copilot のモード・事前導入
 > パッケージなど)は **[docs/USAGE.md](docs/USAGE.md)** を参照。
@@ -145,17 +144,17 @@ marimo UI を開いたら:
 
 | パス | 役割 |
 |---|---|
-| `kind/cluster-step1.yaml` | Step 1 用 kind 設定(2718 + 3017 + 3021 + 3025 を LAN bind) |
-| `kind/cluster-step4.yaml` | Step 4 用 kind 設定(80 + 3017 + 3021 + 3025 を LAN bind) |
-| `images/marimo/Dockerfile` | marimo 公式 + `marimo[mcp]` extras + `external_agents` 初期有効化 + 分析パッケージ事前導入 + ノートブック自動起動/自動生成(`MARIMO_NOTEBOOK`)+ 変更の即時反映(`--watch`/autorun)+ Web 公開無効化(`[sharing]` で publish/WASM/molab を非表示) |
+| `kind/cluster-step1.yaml` | Step 1 用 kind 設定(:80 のみ LAN bind / Model Y) |
+| `kind/cluster-step4.yaml` | Step 4 用 kind 設定(:80 のみ LAN bind / Model Y) |
+| `images/marimo/Dockerfile` | **patched marimo**(fork)+ `marimo[mcp]` extras + `external_agents` + 分析パッケージ + ノートブック自動起動(`MARIMO_NOTEBOOK`)+ 即時反映(`--watch`/autorun)+ base-url 可変(`MARIMO_BASE_URL`)+ Web 公開無効化(`[sharing]`) |
 | `images/acp-agent/` | Claude Code ACP サイドカー(`@anthropic-ai/claude-code` + `@zed-industries/claude-code-acp`)+ marimo-pair skill |
 | `images/codex-acp/` | Codex ACP サイドカー(`@openai/codex` + `@zed-industries/codex-acp`)+ marimo-pair skill |
 | `images/copilot-acp/` | Copilot CLI ACP サイドカー(`@github/copilot`)+ marimo-pair skill |
-| `images/{acp-agent,codex-acp,copilot-acp}/marimo-pair-skill/` | 各 ACP イメージへ vendor した marimo-pair skill(SKILL.md + scripts、agent 別 skill dir へ COPY) |
+| `images/{acp-agent,codex-acp,copilot-acp}/marimo-pair-skill/` | 各 ACP イメージへ vendor した marimo-pair skill |
 | `manifests/namespace.yaml` | 専用 namespace `marimo`(全構成共通) |
 | `manifests/step1/base/` | Step 1 共通(marimo Deployment + PVC) |
-| `manifests/step1/{claude,codex,copilot}/` | Step 1 の agent 別 overlay(Kustomize、サイドカー patch + Service) |
-| `manifests/step4/{claude,codex,copilot}/` | Step 4 の agent 別フルマニフェスト(nginx + nb1/nb2 テナント) |
+| `manifests/step1/{claude,codex,copilot}/` | Step 1 overlay(サイドカー patch + ClusterIP Service + nginx 前段) |
+| `manifests/step4/{claude,codex,copilot}/` | Step 4 フルマニフェスト(nginx path 振り分け + nb1/nb2 テナント、`--base-url /nbN`) |
 | `scripts/bootstrap.sh` | 統合 CLI(`--step --agent`) |
 | `scripts/teardown.sh` | クラスタ削除(PVC含む) |
 | `scripts/install-tools.sh` | kind/kubectl の sudo なしインストール |
@@ -179,7 +178,7 @@ ACPで接続したエージェントは、以下を使ってノートブック�
 - `marimo._code_mode` でセルの作成/編集/削除・実行、パッケージ追加、ウィジェット操作
 - ファイル編集より高機能(リッチ表示・カーネル内省・即時反映)。**`code_mode` で作成/編集したセル構造**は `/workspace/notebook.py` に永続化される(一方、`execute-code.sh` の素のスクラッチパッド実行による一時変数・実行結果は永続化されない)
 - スキルの配置先: claude=`~/.claude/skills/`、copilot=`~/.copilot/skills/`、codex=`~/.codex/skills/`
-- **接続は必ず `--url http://localhost:2718`**(別コンテナのため discovery は使えない。焼き込んだ SKILL.md 冒頭に明記済み)
+- **接続 URL**: Step 1 は `--url http://localhost:2718`。**⚠️ Step 4(Model Y, `--base-url /nbN`)では marimo API も `/nbN/` 配下**になるため `--url http://localhost:2718/nbN` が必要。焼き込んだ SKILL.md は `:2718`(prefix なし)固定のため、**Step 4 での marimo-pair は現状未対応(既知の制約・別 PR で対応予定)**。ファイル編集経由(Read/Edit/Write + `--watch`/autorun)は Step 4 でも動作する。
 - バージョン更新: `./scripts/vendor-marimo-pair.sh`(pin tag を取得し3イメージへ再 vendor)
 
 **marimo の MCP サーバー由来**(`--mcp` 有効化済、Pod内で `mcp__marimo__*` として見える):
@@ -188,11 +187,10 @@ ACPで接続したエージェントは、以下を使ってノートブック�
 - `get_marimo_rules` / `lint_notebook`
 - プロンプト: `active_notebooks`, `errors_summary`
 
-> marimo の MCP サーバーは marimo 自身の HTTP ポート上の `/mcp/server` に公開される。アクセス経路は構成で変わる:
+> marimo の MCP サーバーは marimo の HTTP ポート上 `/mcp/server`(base-url 配下なら `/nbN/mcp/server`)に公開される。Pod 内 ACPサイドカーからの内部呼び出し:
 >
-> - **Step 1**: `http://<LAN_IP>:2718/mcp/server`(NodePort 経由)
-> - **Step 4**: `http://nb<N>.<LAN_IP>.nip.io/mcp/server`(nginx 経由でテナント別 Pod に振り分け)
-> - **Pod 内 ACPサイドカーからの内部呼び出し**: `http://localhost:2718/mcp/server`(Step 1/4 共通、コンテナ間 localhost)
+> - **Step 1**(root 配信): `http://localhost:2718/mcp/server`
+> - **Step 4**(`--base-url /nbN`): `http://localhost:2718/nbN/mcp/server`(claude サイドカーへ `MARIMO_MCP_URL` で注入済み)
 >
 > Claude Code 構成は起動時に自動登録、Codex 構成は現状未対応。
 
@@ -209,11 +207,11 @@ Codex CLI は未知モデルに対して「Model metadata for X not found. Defau
 - **`--no-token` で marimo 認証なし**: LAN/VPN 前提。Step 4 でも nginx 認証は載せていない(本物の運用に進む時に Basic Auth / OIDC 等を追加)
 - **TLS なし(平文 HTTP/WS)**: LAN/VPN 前提
 - **MCP エンドポイント `/mcp/server` も認証なしで LAN 公開**: `--no-token` 下で `RequiresEditMiddleware` も素通り
-- **Step 4: nip.io 公開DNS依存**: 名前は世界中から見えるが、解決先がLANのプライベートIPなので外部から到達不可。気になる場合は家庭内 dnsmasq / ルーター静的DNS に切替可能(Service宛先は不変)
+- **patched marimo に依存**: ACP 相対パス化のため fork イメージ(`ghcr.io/phisignet/marimo-patched`)を使用。上流 #8531 マージで公式に戻せる(詳細 [docs/model-y-design.md](docs/model-y-design.md))
+- **Step 4 で marimo-pair 未対応**: base-url 配下の API パスに skill が未追従(別 PR で対応予定)。ファイル編集経由は動作
 
 ## 関連 Issue / 参考
 - marimo Agents 公式: https://docs.marimo.io/guides/editor_features/agents/
-- 3017 ハードコード関連: marimo-team/marimo#8531(プロキシ提案・未実装), #6611
+- ACP WS 相対パス化(本構成の前提): marimo-team/marimo#8531(プロキシ提案・上流), #6611
 - Claude Code Headless 認証: https://code.claude.com/docs/en/authentication
 - Codex+Ollama 統合: https://docs.ollama.com/integrations/codex
-- nip.io: https://nip.io/
